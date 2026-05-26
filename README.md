@@ -9,6 +9,31 @@
 
 > 適合的場景:你只是想讓 AI agent **以 bot 身分發通知**到頻道,並期望自己的 Slack 客戶端跳 unread + push notification(自己用 user-token 發訊息給自己不會通知)。
 
+## ⚠️ 重要:這是 write-only MCP,需搭配另一個能讀 Slack 的 MCP
+
+`slack-notify` **只能發訊息**,不能列頻道 / 搜訊息 / 查 user — 它連「頻道存在」這件事都不知道。這是刻意的最小權限設計。
+
+實際工作流:
+
+```
+你: 「發 hello 到 #solomon-test」
+  │
+  ├─→ Claude 用「讀取用 MCP」呼叫 slack_search_channels("solomon-test")
+  │   ← 拿到 channel_id = C07XXXX
+  │
+  └─→ Claude 用 slack-notify 呼叫 send_message(channel_id=C07XXXX, text="hello")
+      ← Sent.
+```
+
+**所以使用前你必須先有一個能讀 Slack 的 MCP**,推薦其一:
+
+| 方案 | 來源 | 適合 |
+| --- | --- | --- |
+| **claude.ai 內建 Slack connector**(最簡單) | claude.ai → Connectors → Slack OAuth | 一般 user,在 Claude Code / Desktop / web 都通 |
+| [korotovsky/slack-mcp-server](https://github.com/korotovsky/slack-mcp-server) | 自架 stdio MCP | 進階,想全部 self-host;支援 xoxp/xoxc/xoxd 多種 token 模式 |
+
+> 💡 如果完全沒有讀取 MCP,也可以手動取得 channel ID:Slack 桌面版右鍵 channel → **Copy link**,URL 結尾 `/archives/CXXXXXXX` 即是 ID。但每次都這樣很煩,所以還是建議搭配讀取 MCP。
+
 ## 為什麼自己寫一個
 
 主流 Slack MCP server 多半把工具集打包得很完整(讀頻道、搜尋訊息、列 user、reactions...),代價是需要一堆額外 scopes,而且不少實作會在啟動時預先抓 user list,缺 scope 就 fatal 直接退出。

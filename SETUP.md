@@ -11,6 +11,35 @@
 - Node.js **18 或以上**(`node --version` 確認)
 - 一個你有管理權的 Slack workspace
 - Claude Code(或其他支援 stdio MCP 的 client)
+- **另一個能讀 Slack 的 MCP**(見 §0.1) — 這個 server 只負責發送,channel ID 從別處來
+
+### 0.1 為什麼需要「另一個 MCP」
+
+`slack-notify` 只實作 `chat.postMessage`,沒任何讀取能力。它**不知道**有哪些 channel、channel 對應到什麼名字、有哪些 user — 它需要外部把 `channel_id` (例 `C07XXXX`) 直接餵給它。
+
+實務上 AI agent 的對話會像這樣:
+
+```
+User: 發 deploy 完成 到 #releases
+Agent: [內部] 查 channel "releases" 的 ID
+       → 呼叫「讀取用 MCP」的 slack_search_channels("releases")
+       ← C0AB12CD3
+Agent: [內部] 發訊息
+       → 呼叫 slack-notify 的 send_message(channel_id=C0AB12CD3, text="deploy 完成")
+       ← Sent.
+```
+
+少了讀取 MCP,使用者每次都得自己貼 channel ID,失去 AI agent 的便利性。
+
+**選一個讀取 MCP 設定好再繼續:**
+
+| 方案 | 設定難度 | 適合誰 |
+| --- | --- | --- |
+| **claude.ai 內建 Slack connector** | 低(網頁 OAuth 一次完成) | 一般使用者,推薦 |
+| [korotovsky/slack-mcp-server](https://github.com/korotovsky/slack-mcp-server) | 中(需要 xoxp 或 xoxc/xoxd) | 想自架 / 不依賴 claude.ai connector |
+| 自己擴充本 repo | 高(要加 scope + 工具) | 想全部自掌控 |
+
+> 💡 **臨時解法(沒讀取 MCP 也能用)**:Slack 桌面版右鍵 channel → Copy link,URL `https://YOUR.slack.com/archives/CXXXXXXXX` 結尾就是 channel ID。手動把 ID 給 agent 即可,但每個 channel 都要查一次。
 
 ---
 
@@ -137,11 +166,23 @@ npm test
 
 ### 8.2 用 Claude Code 測
 
+#### 已知 channel ID 的情況
 新 session 直接說:
 
 > 幫我用 slack-notify 發 hello 到 C07XXXX
 
 Claude 會呼叫 `mcp__slack-notify__send_message`,你應該會在 Slack 看到該訊息以 bot 身分送達,你的客戶端會跳 unread 跟通知。
+
+#### 真實情境(搭配讀取 MCP)
+通常你不會記得 channel ID,而是直接講頻道名字:
+
+> 幫我發 deploy 完成 到 #releases
+
+Claude 會:
+1. 用讀取 MCP(claude.ai connector / korotovsky 等)呼叫 `slack_search_channels("releases")` 拿到 channel ID
+2. 用 `slack-notify` 的 `send_message` 把訊息送出
+
+如果你只設定了 `slack-notify` 沒設讀取 MCP,Claude 會回你「不知道 channel ID,請你提供」— 這就是 §0.1 強調的「兩個 MCP 缺一不可」。
 
 ---
 
