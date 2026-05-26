@@ -1,0 +1,28 @@
+{
+  "name": "slack-notify-mcp",
+  "version": "1.0.0",
+  "description": "Minimal stdio MCP server that posts Slack messages via a bot token. Zero npm deps.",
+  "bin": {
+    "slack-notify-mcp": "./slack-notify.js"
+  },
+  "main": "slack-notify.js",
+  "scripts": {
+    "test": "node test-slack-notify.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "mcp",
+    "slack",
+    "claude",
+    "notification",
+    "bot"
+  ],
+  "author": "iBears-Solomon",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/iBears-Solomon/slack-notify-mcp.git"
+  }
+}

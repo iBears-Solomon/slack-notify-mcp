@@ -1,0 +1,14 @@
+node_modules/
+*.log
+.DS_Store
+.env
+.env.*
+*.local
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# Personal scratch
+scratch/
