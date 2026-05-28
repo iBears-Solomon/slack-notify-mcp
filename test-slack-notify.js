@@ -142,7 +142,7 @@ async function happyPath() {
     const initResp = await s.rpc('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
-      clientInfo: { name: 'test-driver', version: '2.0.0' },
+      clientInfo: { name: 'test-driver', version: '2.1.0' },
     });
     check(initResp.result && initResp.result.serverInfo, 'happy: initialize missing serverInfo');
     check(
@@ -211,7 +211,7 @@ async function missingEnv(label, env, expectedMissing) {
     await s.rpc('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
-      clientInfo: { name: 'test-driver', version: '2.0.0' },
+      clientInfo: { name: 'test-driver', version: '2.1.0' },
     });
     s.notify('notifications/initialized');
 

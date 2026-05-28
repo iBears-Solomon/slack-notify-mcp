@@ -60,7 +60,7 @@ done
 <repo>/SETUP.md      # 完整 SOP、scope 設定、troubleshooting
 ```
 
-讀完後,**用一句話告訴使用者你抓到的版本與 repo 路徑**(例 "已讀 v2.0.0 @ ~/slack-notify-mcp,目前 channel 走 SLACK_CHANNEL_ID env var,單一 chat:write scope"),確認文件未過期。
+讀完後,**用一句話告訴使用者你抓到的版本與 repo 路徑**(例 "已讀 v2.1.0 @ ~/slack-notify-mcp,目前 channel 走 SLACK_CHANNEL_ID + SLACK_CHANNEL_NAME env vars,單一 chat:write scope"),確認文件未過期。
 
 > ⚠️ 如果發現 SKILL.md 與 README/SETUP 內容矛盾(版本不一致時可能發生),**以 README/SETUP 為準**,並提醒使用者該 skill 可能需要更新。
 

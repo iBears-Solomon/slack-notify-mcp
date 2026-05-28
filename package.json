@@ -1,6 +1,6 @@
 {
   "name": "slack-notify-mcp",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Minimal stdio MCP server that posts Slack messages via a bot token to a configured channel. Zero npm deps, only chat:write scope required.",
   "bin": {
     "slack-notify-mcp": "./slack-notify.js"

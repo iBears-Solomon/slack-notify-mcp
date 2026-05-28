@@ -11,15 +11,16 @@
 
 > 適合的場景:你想讓 AI agent **以 bot 身分發通知**到固定頻道,並期望自己的 Slack 客戶端跳 unread + push notification(自己用 user-token 發訊息給自己不會通知)。
 
-## ⚠️ 設定前怎麼拿到 channel ID
+## ⚠️ 設定前怎麼拿到 channel ID + name
 
-這個 MCP 不能列 channel — channel ID 必須在設定階段就準備好寫入 `~/.claude.json`。三個方法:
+這個 MCP 不能列 channel — channel **ID** 與 **name** 都必須在設定階段就準備好寫入 `~/.claude.json`。三個方法:
 
-1. **Slack 桌面版**:在 channel 名稱上**右鍵 → Copy link**,URL 結尾 `/archives/CXXXXXXX` 就是 channel ID
-2. **Slack 網頁版**:打開 channel,網址列尾段 `/messages/CXXXXXXX`(或舊版 `/archives/CXXXXXXX`)
-3. **搭配其他能讀 Slack 的 MCP**(claude.ai 內建 Slack connector / 其他 self-host MCP)讓 agent 幫你查
+1. **Slack 桌面版**:在 channel 名稱上**右鍵 → Copy link** — channel name 就是頻道清單上看到的那個(去掉 `#`),channel ID 是 URL 結尾的 `CXXXXXXX`
+2. **Slack 網頁版**:打開 channel,網址列尾段 `/messages/CXXXXXXX`(或舊版 `/archives/CXXXXXXX`)是 ID,name 看左側清單
+3. **搭配其他能讀 Slack 的 MCP**(claude.ai 內建 Slack connector / 其他 self-host MCP)讓 agent 一次幫你查 ID + name
 
 > 💡 設定完成後就**不再依賴**其他 MCP — slack-notify 啟動後完全 self-contained。
+> 💡 `SLACK_CHANNEL_NAME` 建議和 Slack 上實際 channel 名一致(例如 `#releases` 填 `releases`),避免後續看到「Sent. channel=#xxx」跟實際對不上。
 
 ## Quick Start
 
@@ -62,7 +63,7 @@ send_message
 └── thread_ts  (string, optional) — 回覆某 thread 時帶上 parent 的 ts
 ```
 
-> ❗ Channel **不是**工具參數 — 由 `SLACK_CHANNEL_ID` env var 在 config 時固定。
+> ❗ Channel **不是**工具參數 — 由 `SLACK_CHANNEL_ID`(API 用)+ `SLACK_CHANNEL_NAME`(顯示用)兩個 env var 在 config 時固定。
 
 成功回傳(含 `SLACK_CHANNEL_NAME` 的人類可讀標籤):
 ```

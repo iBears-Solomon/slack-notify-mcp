@@ -1,6 +1,6 @@
 # SETUP — 從零建立 Slack Notify MCP
 
-完整 SOP:建立 Slack App → 取得 bot token → 拿到 channel ID → 安裝這個 MCP → 接到 Claude Code。
+完整 SOP:建立 Slack App → 取得 bot token → 拿到 channel ID + name → 安裝這個 MCP → 接到 Claude Code。
 
 預計時間 **10–15 分鐘**(包含 Slack 那邊的設定)。
 
@@ -281,7 +281,7 @@ Token 錯了 / 已 revoke / Reinstall 之後 token 更新了但 `~/.claude.json`
 
 ## 進階:擴充自己的工具
 
-整個 server 只有 ~200 行,新增工具的範本:
+整個 server 只有 ~240 行,新增工具的範本:
 
 1. 在 `TOOLS` array 加一個 entry,定義 name + schema
 2. 在 `handle()` 裡 `tools/call` 分支加一個 if
@@ -319,7 +319,7 @@ if (name === 'add_reaction') {
 }
 ```
 
-加完 scope 記得 Reinstall;新工具沿用同一個 `SLACK_CHANNEL_ID`,所以不用新增 env var。
+加完 scope 記得 Reinstall;新工具沿用既有的 `SLACK_BOT_TOKEN` / `SLACK_CHANNEL_ID` / `SLACK_CHANNEL_NAME`,通常不用新增 env var。
 
 ---
 
