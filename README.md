@@ -43,6 +43,8 @@ chmod +x ~/.local/share/slack-notify-mcp/slack-notify.js
 
 完整步驟(建立 Slack App、拿 token、邀請 bot、測試)看 [SETUP.md](./SETUP.md)。
 
+> 💡 想讓 Claude 一路帶你跑完安裝?repo 內附 [`slack-notify--deploy`](./.claude/skills/slack-notify--deploy/SKILL.md) skill — 在 Claude Code 開啟這個 repo,直接說「跑 deploy skill」,它會讀文件、偵測環境、引導 Slack App 設定、寫入 config、跑測試。
+
 ## Tool Schema
 
 ```

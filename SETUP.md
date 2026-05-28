@@ -4,6 +4,8 @@
 
 預計時間 **10–15 分鐘**(包含 Slack 那邊的設定)。
 
+> 💡 **想跳過手動步驟**:repo 內附 [`slack-notify--deploy`](./.claude/skills/slack-notify--deploy/SKILL.md) skill — 在 Claude Code 開這個 repo,跟 Claude 說「跑 deploy skill」,它會自動讀 README/SETUP、偵測你的環境、引導你完成 Slack App 設定、寫 config、跑 test。本文件適合想手動掌控每一步的人,或當作 skill 出錯時的 fallback 參考。
+
 ---
 
 ## 0. 前置需求
