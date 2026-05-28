@@ -2,33 +2,37 @@
 'use strict';
 
 // Minimal stdio MCP server: exposes `send_message` calling Slack chat.postMessage.
-// Zero npm deps — uses node stdlib only.
+// Channel is bound at configuration time via SLACK_CHANNEL_ID env var — one
+// MCP instance = one notification destination. For multiple destinations,
+// configure multiple slack-notify entries in ~/.claude.json.
+//
+// Required env:
+//   SLACK_BOT_TOKEN  — Bot User OAuth Token (xoxb-...)
+//   SLACK_CHANNEL_ID — Channel/user ID this instance posts to (e.g. C07XXXX)
+//
+// Zero npm deps — uses Node stdlib only.
 
 const readline = require('readline');
 const https = require('https');
 
 const BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
-if (!BOT_TOKEN) {
-  process.stderr.write('slack-notify: missing SLACK_BOT_TOKEN env\n');
-  process.exit(1);
-}
+const CHANNEL_ID = process.env.SLACK_CHANNEL_ID;
 
 const PROTOCOL_VERSION = '2024-11-05';
 
+// Tool schema — text + optional thread_ts. Channel is NOT a tool argument;
+// it is bound to this MCP instance via SLACK_CHANNEL_ID.
 const TOOLS = [
   {
     name: 'send_message',
     description:
-      'Send a Slack message via the Claude Notify bot. ' +
-      'channel_id is a Slack channel ID (e.g. C07LW2QSF3Q) or user ID for DM (e.g. U024Y9EG53P). ' +
-      'The bot must be invited to the target channel first.',
+      'Send a message via the configured Slack bot to the configured channel ' +
+      "(SLACK_CHANNEL_ID set in this MCP's env). One MCP instance posts to " +
+      'exactly one channel — to target other channels, configure additional ' +
+      'slack-notify entries.',
     inputSchema: {
       type: 'object',
       properties: {
-        channel_id: {
-          type: 'string',
-          description: 'Slack channel ID or user ID for DM',
-        },
         text: {
           type: 'string',
           description: 'Message text. Supports Slack mrkdwn.',
@@ -38,10 +42,31 @@ const TOOLS = [
           description: 'Optional: parent message ts to reply in thread',
         },
       },
-      required: ['channel_id', 'text'],
+      required: ['text'],
     },
   },
 ];
+
+function checkRequiredEnv() {
+  const missing = [];
+  if (!BOT_TOKEN) missing.push('SLACK_BOT_TOKEN');
+  if (!CHANNEL_ID) missing.push('SLACK_CHANNEL_ID');
+  if (missing.length === 0) return null;
+  return (
+    'slack-notify: missing required env var(s): ' +
+    missing.join(', ') +
+    '. Add to the `env` block of this MCP server entry in ~/.claude.json ' +
+    'and restart Claude Code. The tool will refuse to call Slack until both are set.'
+  );
+}
+
+// Warn at startup but DO NOT exit — the MCP client can still list tools,
+// and the operator sees the actionable error in stderr. Tool calls will
+// return the same error message via isError so the model can relay it.
+const startupErr = checkRequiredEnv();
+if (startupErr) {
+  process.stderr.write(startupErr + '\n');
+}
 
 function writeMessage(obj) {
   process.stdout.write(JSON.stringify(obj) + '\n');
@@ -80,17 +105,23 @@ function slackPost(method, body) {
 }
 
 async function callSendMessage(args) {
+  // Re-check env at call time — covers the case where the operator started
+  // the server with partial env. We don't want the model to silently fail.
+  const envErr = checkRequiredEnv();
+  if (envErr) {
+    return { content: [{ type: 'text', text: envErr }], isError: true };
+  }
   if (!args || typeof args !== 'object') {
     return { content: [{ type: 'text', text: 'Error: missing arguments' }], isError: true };
   }
-  const { channel_id, text, thread_ts } = args;
-  if (!channel_id || !text) {
+  const { text, thread_ts } = args;
+  if (!text || typeof text !== 'string') {
     return {
-      content: [{ type: 'text', text: 'Error: channel_id and text are required' }],
+      content: [{ type: 'text', text: 'Error: `text` is required and must be a string' }],
       isError: true,
     };
   }
-  const body = { channel: channel_id, text };
+  const body = { channel: CHANNEL_ID, text };
   if (thread_ts) body.thread_ts = thread_ts;
   try {
     const r = await slackPost('chat.postMessage', body);
@@ -101,7 +132,7 @@ async function callSendMessage(args) {
       };
     }
     const ts = r.ts || '';
-    const ch = r.channel || channel_id;
+    const ch = r.channel || CHANNEL_ID;
     return {
       content: [
         {
@@ -131,7 +162,7 @@ async function handle(req) {
       result: {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: {} },
-        serverInfo: { name: 'slack-notify-local', version: '1.0.0' },
+        serverInfo: { name: 'slack-notify-local', version: '2.0.0' },
       },
     };
   }

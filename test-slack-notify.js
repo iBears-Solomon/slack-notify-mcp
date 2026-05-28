@@ -2,11 +2,15 @@
 'use strict';
 
 // Test driver for slack-notify MCP server.
-// Spawns the server, walks through initialize → tools/list → tools/call,
-// asserts each response, and prints a diagnostic block on any failure.
+//
+// Three scenarios:
+//   1. Happy path — both env vars set, send a message, expect ok + ts
+//   2. Missing SLACK_CHANNEL_ID — server starts, tool call returns isError
+//      with a message naming the missing var; Slack API is NOT called
+//   3. Missing SLACK_BOT_TOKEN — same as (2) but for the token
 //
 // Usage:
-//   SLACK_BOT_TOKEN=xoxb-... TEST_CHANNEL_ID=C... node test-slack-notify.js
+//   SLACK_BOT_TOKEN=xoxb-... SLACK_CHANNEL_ID=C... node test-slack-notify.js
 
 const { spawn } = require('child_process');
 const path = require('path');
@@ -14,163 +18,265 @@ const readline = require('readline');
 
 const SERVER = path.join(__dirname, 'slack-notify.js');
 const TOKEN = process.env.SLACK_BOT_TOKEN;
-const CHANNEL = process.env.TEST_CHANNEL_ID || 'C07LW2QSF3Q'; // #solomon-test default
+const CHANNEL = process.env.SLACK_CHANNEL_ID || process.env.TEST_CHANNEL_ID;
 const MARKER = process.env.TEST_MARKER || `mcp-test-${Date.now()}`;
 
-if (!TOKEN) {
-  console.error('Missing SLACK_BOT_TOKEN');
+if (!TOKEN || !CHANNEL) {
+  console.error('Missing SLACK_BOT_TOKEN or SLACK_CHANNEL_ID — required for the happy-path test');
   process.exit(2);
 }
 
-const child = spawn(process.execPath, [SERVER], {
-  env: { ...process.env, SLACK_BOT_TOKEN: TOKEN },
-  stdio: ['pipe', 'pipe', 'pipe'],
-});
+// ----------------------------------------------------------------------
+// JSON-RPC helpers operating on a spawned server.
+// ----------------------------------------------------------------------
 
-const stderrBuf = [];
-child.stderr.on('data', (c) => stderrBuf.push(c.toString()));
-child.on('error', (e) => {
-  console.error('Failed to spawn server:', e.message);
-  process.exit(2);
-});
-
-const rl = readline.createInterface({ input: child.stdout });
-const pending = new Map(); // id → {resolve, reject}
-
-rl.on('line', (line) => {
-  const trimmed = line.trim();
-  if (!trimmed) return;
-  let msg;
-  try {
-    msg = JSON.parse(trimmed);
-  } catch (e) {
-    console.error('Server emitted non-JSON line:', trimmed);
-    return;
+function startServer(envOverrides) {
+  // Inherit non-SLACK_* vars from parent (PATH, HOME, ...), then apply
+  // ONLY the SLACK_* vars the caller explicitly provided. This lets us
+  // truly omit SLACK_BOT_TOKEN or SLACK_CHANNEL_ID for the missing-env
+  // test scenarios — passing undefined via spread would have stringified
+  // to "undefined" in the child process.
+  const childEnv = {};
+  for (const k of Object.keys(process.env)) {
+    if (!k.startsWith('SLACK_')) childEnv[k] = process.env[k];
   }
-  if (msg.id !== undefined && pending.has(msg.id)) {
-    const { resolve } = pending.get(msg.id);
-    pending.delete(msg.id);
-    resolve(msg);
+  for (const k of Object.keys(envOverrides)) {
+    childEnv[k] = envOverrides[k];
   }
-});
-
-let nextId = 1;
-function rpc(method, params) {
-  const id = nextId++;
-  const req = { jsonrpc: '2.0', id, method };
-  if (params !== undefined) req.params = params;
-  const p = new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject });
-    setTimeout(() => {
-      if (pending.has(id)) {
-        pending.delete(id);
-        reject(new Error(`Timeout waiting for ${method} (id=${id})`));
-      }
-    }, 15000);
+  const child = spawn(process.execPath, [SERVER], {
+    env: childEnv,
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
-  child.stdin.write(JSON.stringify(req) + '\n');
-  return p;
+  const stderrBuf = [];
+  child.stderr.on('data', (c) => stderrBuf.push(c.toString()));
+  const pending = new Map();
+  let nextId = 1;
+  const rl = readline.createInterface({ input: child.stdout });
+  rl.on('line', (line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    let msg;
+    try {
+      msg = JSON.parse(trimmed);
+    } catch (_) {
+      return;
+    }
+    if (msg.id !== undefined && pending.has(msg.id)) {
+      const { resolve } = pending.get(msg.id);
+      pending.delete(msg.id);
+      resolve(msg);
+    }
+  });
+  function rpc(method, params) {
+    const id = nextId++;
+    const req = { jsonrpc: '2.0', id, method };
+    if (params !== undefined) req.params = params;
+    const p = new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject });
+      setTimeout(() => {
+        if (pending.has(id)) {
+          pending.delete(id);
+          reject(new Error(`Timeout waiting for ${method} (id=${id})`));
+        }
+      }, 15000);
+    });
+    child.stdin.write(JSON.stringify(req) + '\n');
+    return p;
+  }
+  function notify(method, params) {
+    const req = { jsonrpc: '2.0', method };
+    if (params !== undefined) req.params = params;
+    child.stdin.write(JSON.stringify(req) + '\n');
+  }
+  function stop() {
+    try {
+      child.stdin.end();
+    } catch (_) {}
+    child.kill();
+  }
+  return { child, stderrBuf, rpc, notify, stop };
 }
 
-function notify(method, params) {
-  const req = { jsonrpc: '2.0', method };
-  if (params !== undefined) req.params = params;
-  child.stdin.write(JSON.stringify(req) + '\n');
-}
+// ----------------------------------------------------------------------
+// Assertions.
+// ----------------------------------------------------------------------
 
 const failures = [];
 function check(cond, msg) {
   if (!cond) failures.push(msg);
 }
 
-function dumpAndExit(code) {
-  if (stderrBuf.length) {
-    console.error('--- server stderr ---');
-    console.error(stderrBuf.join(''));
+function dumpAndExit(code, stderrBufs) {
+  for (const buf of stderrBufs || []) {
+    if (buf.length) {
+      console.error('--- server stderr ---');
+      console.error(buf.join(''));
+    }
   }
   if (failures.length) {
     console.error('--- failures ---');
     for (const f of failures) console.error(' • ' + f);
   }
-  try {
-    child.stdin.end();
-  } catch (_) {}
-  child.kill();
   process.exit(code);
 }
 
-(async () => {
+// ----------------------------------------------------------------------
+// Scenario 1: happy path.
+// ----------------------------------------------------------------------
+
+async function happyPath() {
+  const s = startServer({ SLACK_BOT_TOKEN: TOKEN, SLACK_CHANNEL_ID: CHANNEL });
   try {
-    // 1. initialize
-    const initResp = await rpc('initialize', {
+    // initialize
+    const initResp = await s.rpc('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
-      clientInfo: { name: 'test-driver', version: '1.0.0' },
+      clientInfo: { name: 'test-driver', version: '2.0.0' },
     });
-    check(initResp.result, 'initialize: missing result');
-    check(initResp.result && initResp.result.serverInfo, 'initialize: missing serverInfo');
+    check(initResp.result && initResp.result.serverInfo, 'happy: initialize missing serverInfo');
     check(
       initResp.result && initResp.result.serverInfo && initResp.result.serverInfo.name === 'slack-notify-local',
-      'initialize: serverInfo.name mismatch'
-    );
-    check(
-      initResp.result && initResp.result.capabilities && initResp.result.capabilities.tools !== undefined,
-      'initialize: capabilities.tools missing'
+      'happy: serverInfo.name mismatch'
     );
 
-    // 2. initialized notification (no reply)
-    notify('notifications/initialized');
+    // initialized notification (no reply)
+    s.notify('notifications/initialized');
 
-    // 3. tools/list
-    const listResp = await rpc('tools/list');
-    check(listResp.result, 'tools/list: missing result');
+    // tools/list
+    const listResp = await s.rpc('tools/list');
     const tools = listResp.result && listResp.result.tools;
-    check(Array.isArray(tools), 'tools/list: tools is not an array');
-    check(tools && tools.length === 1, 'tools/list: expected exactly 1 tool, got ' + (tools ? tools.length : '?'));
-    const sm = tools && tools.find((t) => t.name === 'send_message');
-    check(!!sm, 'tools/list: send_message tool not found');
+    check(Array.isArray(tools) && tools.length === 1, 'happy: expected 1 tool');
+    const sm = tools && tools[0];
+    check(sm && sm.name === 'send_message', 'happy: tool name mismatch');
     check(
-      sm && sm.inputSchema && sm.inputSchema.required && sm.inputSchema.required.includes('channel_id') && sm.inputSchema.required.includes('text'),
-      'tools/list: inputSchema missing required channel_id/text'
+      sm && sm.inputSchema && Array.isArray(sm.inputSchema.required) && sm.inputSchema.required.length === 1 && sm.inputSchema.required[0] === 'text',
+      'happy: inputSchema.required should be exactly [text], got: ' + JSON.stringify(sm && sm.inputSchema && sm.inputSchema.required)
+    );
+    check(
+      sm && sm.inputSchema && sm.inputSchema.properties && !sm.inputSchema.properties.channel_id,
+      'happy: channel_id must NOT appear as a tool input — it is config-time only'
     );
 
-    // 4. tools/call — real Slack message
-    const callResp = await rpc('tools/call', {
+    // tools/call send_message — only text arg, no channel_id
+    const callResp = await s.rpc('tools/call', {
       name: 'send_message',
-      arguments: { channel_id: CHANNEL, text: MARKER },
+      arguments: { text: MARKER },
     });
-    check(callResp.result, 'tools/call: missing result');
     const content = callResp.result && callResp.result.content;
-    check(Array.isArray(content) && content.length > 0, 'tools/call: empty content');
     const textBlock = content && content[0];
-    check(textBlock && textBlock.type === 'text', 'tools/call: first content not text');
+    check(textBlock && textBlock.type === 'text', 'happy: response content not text');
+    check(!callResp.result.isError, 'happy: isError=true — body: ' + (textBlock && textBlock.text));
+    check(textBlock && /ts=\d+\.\d+/.test(textBlock.text), 'happy: response missing ts=...');
+
+    // Unknown tool error path
+    const badResp = await s.rpc('tools/call', { name: 'nope', arguments: {} });
+    check(badResp.error, 'happy: unknown tool should return JSON-RPC error');
+
+    console.log('[happy] PASS — ' + (textBlock && textBlock.text));
+    return { textBlock, stderr: s.stderrBuf };
+  } finally {
+    s.stop();
+  }
+}
+
+// ----------------------------------------------------------------------
+// Scenario 2/3: missing env vars. Server should start (so tools/list works)
+// but tool calls return isError naming the missing var, without contacting Slack.
+// ----------------------------------------------------------------------
+
+async function missingEnv(label, env, expectedMissing) {
+  const s = startServer(env);
+  try {
+    await s.rpc('initialize', {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: { name: 'test-driver', version: '2.0.0' },
+    });
+    s.notify('notifications/initialized');
+
+    // tools/list should still succeed even with missing env
+    const listResp = await s.rpc('tools/list');
     check(
-      !callResp.result.isError,
-      'tools/call: isError=true — body: ' + (textBlock && textBlock.text)
-    );
-    check(
-      textBlock && /ts=\d+\.\d+/.test(textBlock.text),
-      'tools/call: response text missing ts=... — body: ' + (textBlock && textBlock.text)
+      listResp.result && listResp.result.tools && listResp.result.tools.length === 1,
+      `${label}: tools/list should still work with missing env`
     );
 
-    // 5. Unknown tool error path
-    const badResp = await rpc('tools/call', {
-      name: 'nonexistent_tool',
-      arguments: {},
+    // tools/call should error out without calling Slack
+    const callResp = await s.rpc('tools/call', {
+      name: 'send_message',
+      arguments: { text: 'should-never-reach-slack' },
     });
-    check(badResp.error, 'unknown tool: expected error response');
+    check(callResp.result, `${label}: tools/call must produce a result (not transport error)`);
+    check(
+      callResp.result && callResp.result.isError === true,
+      `${label}: tools/call should set isError=true`
+    );
+    const txt = callResp.result && callResp.result.content && callResp.result.content[0] && callResp.result.content[0].text;
+    for (const name of expectedMissing) {
+      check(
+        txt && txt.includes(name),
+        `${label}: error text should mention "${name}", got: ${txt}`
+      );
+    }
+
+    // stderr warning should also mention the missing var (operator visibility)
+    const stderrJoined = s.stderrBuf.join('');
+    for (const name of expectedMissing) {
+      check(
+        stderrJoined.includes(name),
+        `${label}: stderr should warn about "${name}", got: ${stderrJoined.slice(0, 200)}`
+      );
+    }
+
+    console.log(`[${label}] PASS — error text: ${txt}`);
+    return { stderr: s.stderrBuf };
+  } finally {
+    s.stop();
+  }
+}
+
+// ----------------------------------------------------------------------
+// Main.
+// ----------------------------------------------------------------------
+
+(async () => {
+  const stderrBufs = [];
+  try {
+    const r1 = await happyPath();
+    stderrBufs.push(r1.stderr);
+
+    const r2 = await missingEnv(
+      'missing-channel-id',
+      { SLACK_BOT_TOKEN: TOKEN }, // no SLACK_CHANNEL_ID
+      ['SLACK_CHANNEL_ID']
+    );
+    stderrBufs.push(r2.stderr);
+
+    const r3 = await missingEnv(
+      'missing-bot-token',
+      { SLACK_CHANNEL_ID: CHANNEL }, // no SLACK_BOT_TOKEN
+      ['SLACK_BOT_TOKEN']
+    );
+    stderrBufs.push(r3.stderr);
+
+    const r4 = await missingEnv(
+      'missing-both',
+      {}, // neither set
+      ['SLACK_BOT_TOKEN', 'SLACK_CHANNEL_ID']
+    );
+    stderrBufs.push(r4.stderr);
 
     if (failures.length) {
-      console.error('FAIL — ' + failures.length + ' assertion(s) failed');
-      dumpAndExit(1);
+      console.error(`FAIL — ${failures.length} assertion(s) failed`);
+      dumpAndExit(1, stderrBufs);
     }
-    console.log('PASS');
+    console.log('---');
+    console.log('ALL PASS');
     console.log('marker:', MARKER);
     console.log('channel:', CHANNEL);
-    console.log('send_message response text:', textBlock && textBlock.text);
-    dumpAndExit(0);
+    process.exit(0);
   } catch (e) {
     console.error('Test driver error:', e.message);
-    dumpAndExit(3);
+    dumpAndExit(3, stderrBufs);
   }
 })();

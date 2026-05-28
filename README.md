@@ -3,42 +3,22 @@
 最小化的 stdio MCP server,讓 Claude Code(或任何 MCP client)用 Slack bot token 發訊息。
 
 - **零 npm 依賴** — 純 Node stdlib(`readline` + `https`)
-- **單一工具** — `send_message(channel_id, text, thread_ts?)`
-- **單一 scope** — 只需要 bot 的 `chat:write`(視需求可加 `chat:write.public`)
-- **不在啟動時 cache user list** — 避開 [korotovsky/slack-mcp-server](https://github.com/korotovsky/slack-mcp-server) 強制要 `users:read` 才能啟動的設計
+- **單一工具** — `send_message(text, thread_ts?)`
+- **單一 scope** — bot 只需要 `chat:write`
+- **單一目的地** — channel 在 config 時固定,**一個 MCP instance 對應一個頻道**;要發多頻道就配置多個 entry
+- **缺參數會清楚報錯** — `SLACK_BOT_TOKEN` 與 `SLACK_CHANNEL_ID` 任一缺少時,呼叫工具會回傳明確錯誤訊息指出缺哪一個,**不會**真的去打 Slack API
 
-> 適合的場景:你只是想讓 AI agent **以 bot 身分發通知**到頻道,並期望自己的 Slack 客戶端跳 unread + push notification(自己用 user-token 發訊息給自己不會通知)。
+> 適合的場景:你想讓 AI agent **以 bot 身分發通知**到固定頻道,並期望自己的 Slack 客戶端跳 unread + push notification(自己用 user-token 發訊息給自己不會通知)。
 
-## ⚠️ 重要:這是 write-only MCP,需搭配另一個能讀 Slack 的 MCP
+## ⚠️ 設定前怎麼拿到 channel ID
 
-`slack-notify` **只能發訊息**,不能列頻道 / 搜訊息 / 查 user — 它連「頻道存在」這件事都不知道。這是刻意的最小權限設計。
+這個 MCP 不能列 channel — channel ID 必須在設定階段就準備好寫入 `~/.claude.json`。三個方法:
 
-實際工作流:
+1. **Slack 桌面版**:在 channel 名稱上**右鍵 → Copy link**,URL 結尾 `/archives/CXXXXXXX` 就是 channel ID
+2. **Slack 網頁版**:打開 channel,網址列尾段 `/messages/CXXXXXXX`(或舊版 `/archives/CXXXXXXX`)
+3. **搭配其他能讀 Slack 的 MCP**(claude.ai 內建 Slack connector / 其他 self-host MCP)讓 agent 幫你查
 
-```
-你: 「發 hello 到 #solomon-test」
-  │
-  ├─→ Claude 用「讀取用 MCP」呼叫 slack_search_channels("solomon-test")
-  │   ← 拿到 channel_id = C07XXXX
-  │
-  └─→ Claude 用 slack-notify 呼叫 send_message(channel_id=C07XXXX, text="hello")
-      ← Sent.
-```
-
-**所以使用前你必須先有一個能讀 Slack 的 MCP**,推薦其一:
-
-| 方案 | 來源 | 適合 |
-| --- | --- | --- |
-| **claude.ai 內建 Slack connector**(最簡單) | claude.ai → Connectors → Slack OAuth | 一般 user,在 Claude Code / Desktop / web 都通 |
-| [korotovsky/slack-mcp-server](https://github.com/korotovsky/slack-mcp-server) | 自架 stdio MCP | 進階,想全部 self-host;支援 xoxp/xoxc/xoxd 多種 token 模式 |
-
-> 💡 如果完全沒有讀取 MCP,也可以手動取得 channel ID:Slack 桌面版右鍵 channel → **Copy link**,URL 結尾 `/archives/CXXXXXXX` 即是 ID。但每次都這樣很煩,所以還是建議搭配讀取 MCP。
-
-## 為什麼自己寫一個
-
-主流 Slack MCP server 多半把工具集打包得很完整(讀頻道、搜尋訊息、列 user、reactions...),代價是需要一堆額外 scopes,而且不少實作會在啟動時預先抓 user list,缺 scope 就 fatal 直接退出。
-
-如果你只要「發通知」這個能力,這個 60 行有效程式碼的 server 就夠了,而且 Slack App 只需要勾一個 scope。
+> 💡 設定完成後就**不再依賴**其他 MCP — slack-notify 啟動後完全 self-contained。
 
 ## Quick Start
 
@@ -55,7 +35,8 @@ chmod +x ~/.local/share/slack-notify-mcp/slack-notify.js
   "command": "/Users/YOU/.local/share/slack-notify-mcp/slack-notify.js",
   "args": [],
   "env": {
-    "SLACK_BOT_TOKEN": "xoxb-REPLACE-WITH-YOUR-BOT-TOKEN"
+    "SLACK_BOT_TOKEN": "xoxb-REPLACE-WITH-YOUR-BOT-TOKEN",
+    "SLACK_CHANNEL_ID": "C0XXXXXXXXX"
   }
 }
 ```
@@ -66,44 +47,69 @@ chmod +x ~/.local/share/slack-notify-mcp/slack-notify.js
 
 ```
 send_message
-├── channel_id  (string, required) — Channel ID (Cxxxx) 或 User ID (Uxxxx) for DM
-├── text        (string, required) — 訊息內容,支援 Slack mrkdwn
-└── thread_ts   (string, optional) — 回覆某 thread 時帶上 parent 的 ts
+├── text       (string, required) — 訊息內容,支援 Slack mrkdwn
+└── thread_ts  (string, optional) — 回覆某 thread 時帶上 parent 的 ts
 ```
 
-回傳格式(成功):
+> ❗ Channel **不是**工具參數 — 由 `SLACK_CHANNEL_ID` env var 在 config 時固定。
+
+成功回傳:
 ```
 Sent. channel=C07XXXX ts=1779795557.811009
 ```
 
-回傳格式(失敗,例 channel_not_found / not_in_channel):
+API 錯誤(例 `channel_not_found` / `not_in_channel`):
 ```
-Slack API error: channel_not_found
+Slack API error: not_in_channel
 ```
+
+設定錯誤(env var 缺失):
+```
+slack-notify: missing required env var(s): SLACK_CHANNEL_ID. Add to the
+`env` block of this MCP server entry in ~/.claude.json and restart Claude
+Code. The tool will refuse to call Slack until both are set.
+```
+
+## 想發到多個頻道?
+
+每個目的地配置一個 MCP entry,名字加 suffix 區分:
+
+```json
+"slack-notify-releases": {
+  "type": "stdio",
+  "command": "/Users/YOU/.local/share/slack-notify-mcp/slack-notify.js",
+  "args": [],
+  "env": { "SLACK_BOT_TOKEN": "xoxb-...", "SLACK_CHANNEL_ID": "C0AAAA" }
+},
+"slack-notify-alerts": {
+  "type": "stdio",
+  "command": "/Users/YOU/.local/share/slack-notify-mcp/slack-notify.js",
+  "args": [],
+  "env": { "SLACK_BOT_TOKEN": "xoxb-...", "SLACK_CHANNEL_ID": "C0BBBB" }
+}
+```
+
+工具名會是 `mcp__slack-notify-releases__send_message` 與 `mcp__slack-notify-alerts__send_message`,Claude 從工具名就知道發到哪個目的地。
 
 ## Test
 
 ```bash
 SLACK_BOT_TOKEN=xoxb-... \
-TEST_CHANNEL_ID=C07XXXX \
+SLACK_CHANNEL_ID=C07XXXX \
 npm test
 ```
 
-預期輸出:
-```
-PASS
-marker: mcp-test-1234567890
-channel: C07XXXX
-send_message response text: Sent. channel=C07XXXX ts=...
-```
+預期 `ALL PASS`,測試會涵蓋:
+1. **Happy path** — 完整 MCP 協定走過(`initialize` → `tools/list` → `tools/call`)並真的發一則訊息到設定的頻道
+2. **Missing SLACK_CHANNEL_ID** — 啟動時 stderr 警告 + 呼叫工具回傳 isError 提到 `SLACK_CHANNEL_ID`,**不會**打 Slack
+3. **Missing SLACK_BOT_TOKEN** — 同上,提到 `SLACK_BOT_TOKEN`
+4. **Both missing** — 同上,兩個都提到
 
-測試會走完整 MCP 協定:`initialize` → `notifications/initialized` → `tools/list` → `tools/call` → 未知工具 error path,並真的發一則訊息到指定頻道(以 `mcp-test-<timestamp>` 為內容)。
+## 為什麼是 MCP 而不是 Slack Incoming Webhook
 
-## 為什麼是 MCP 而不是 Slack Webhook
-
-- **Webhook** 綁定特定 channel,要發多 channel 就要多個 URL
-- **MCP** 一個 token 任意 channel(只要 bot 被邀請進去)
-- **MCP** 走 stdio,Claude Code / Claude Desktop / Cursor 都可以直接接
+- **Webhook** 每個 channel 一個 URL,token 在 URL query string,洩漏風險較高
+- **MCP** 一個 bot token 可發給多個 channel(以多個 MCP instance 配置)
+- **MCP** 走 stdio,Claude Code / Claude Desktop / Cursor 都可以直接接;agent 自然會把錯誤訊息(missing env / Slack API error)回給使用者,而 webhook 是單向的不回應
 
 ## License
 
