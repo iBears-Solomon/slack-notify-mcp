@@ -3,14 +3,18 @@
 
 // Test driver for slack-notify MCP server.
 //
-// Three scenarios:
-//   1. Happy path — both env vars set, send a message, expect ok + ts
+// Scenarios:
+//   1. Happy path — all three env vars set, send a message, expect ok + ts +
+//      response text containing #<channel-name>
 //   2. Missing SLACK_CHANNEL_ID — server starts, tool call returns isError
-//      with a message naming the missing var; Slack API is NOT called
+//      naming the missing var; Slack API is NOT called
 //   3. Missing SLACK_BOT_TOKEN — same as (2) but for the token
+//   4. Missing SLACK_CHANNEL_NAME — same, for the channel name
+//   5. Missing all three — error names all three
 //
 // Usage:
-//   SLACK_BOT_TOKEN=xoxb-... SLACK_CHANNEL_ID=C... node test-slack-notify.js
+//   SLACK_BOT_TOKEN=xoxb-... SLACK_CHANNEL_ID=C... SLACK_CHANNEL_NAME=... \
+//     node test-slack-notify.js
 
 const { spawn } = require('child_process');
 const path = require('path');
@@ -19,10 +23,13 @@ const readline = require('readline');
 const SERVER = path.join(__dirname, 'slack-notify.js');
 const TOKEN = process.env.SLACK_BOT_TOKEN;
 const CHANNEL = process.env.SLACK_CHANNEL_ID || process.env.TEST_CHANNEL_ID;
+const CHANNEL_NAME = process.env.SLACK_CHANNEL_NAME || 'test-channel';
 const MARKER = process.env.TEST_MARKER || `mcp-test-${Date.now()}`;
 
 if (!TOKEN || !CHANNEL) {
-  console.error('Missing SLACK_BOT_TOKEN or SLACK_CHANNEL_ID — required for the happy-path test');
+  console.error(
+    'Missing SLACK_BOT_TOKEN or SLACK_CHANNEL_ID — required for the happy-path test'
+  );
   process.exit(2);
 }
 
@@ -125,7 +132,11 @@ function dumpAndExit(code, stderrBufs) {
 // ----------------------------------------------------------------------
 
 async function happyPath() {
-  const s = startServer({ SLACK_BOT_TOKEN: TOKEN, SLACK_CHANNEL_ID: CHANNEL });
+  const s = startServer({
+    SLACK_BOT_TOKEN: TOKEN,
+    SLACK_CHANNEL_ID: CHANNEL,
+    SLACK_CHANNEL_NAME: CHANNEL_NAME,
+  });
   try {
     // initialize
     const initResp = await s.rpc('initialize', {
@@ -156,6 +167,12 @@ async function happyPath() {
       sm && sm.inputSchema && sm.inputSchema.properties && !sm.inputSchema.properties.channel_id,
       'happy: channel_id must NOT appear as a tool input — it is config-time only'
     );
+    // Tool description should expose channel name so the model can choose
+    // between multiple slack-notify-* MCP instances at tools/list time.
+    check(
+      sm && typeof sm.description === 'string' && sm.description.includes(`#${CHANNEL_NAME}`),
+      `happy: tool description should include #${CHANNEL_NAME}, got: ${sm && sm.description}`
+    );
 
     // tools/call send_message — only text arg, no channel_id
     const callResp = await s.rpc('tools/call', {
@@ -167,6 +184,10 @@ async function happyPath() {
     check(textBlock && textBlock.type === 'text', 'happy: response content not text');
     check(!callResp.result.isError, 'happy: isError=true — body: ' + (textBlock && textBlock.text));
     check(textBlock && /ts=\d+\.\d+/.test(textBlock.text), 'happy: response missing ts=...');
+    check(
+      textBlock && textBlock.text.includes(`#${CHANNEL_NAME}`),
+      `happy: response should include #${CHANNEL_NAME}, got: ${textBlock && textBlock.text}`
+    );
 
     // Unknown tool error path
     const badResp = await s.rpc('tools/call', { name: 'nope', arguments: {} });
@@ -247,24 +268,31 @@ async function missingEnv(label, env, expectedMissing) {
 
     const r2 = await missingEnv(
       'missing-channel-id',
-      { SLACK_BOT_TOKEN: TOKEN }, // no SLACK_CHANNEL_ID
+      { SLACK_BOT_TOKEN: TOKEN, SLACK_CHANNEL_NAME: CHANNEL_NAME }, // no SLACK_CHANNEL_ID
       ['SLACK_CHANNEL_ID']
     );
     stderrBufs.push(r2.stderr);
 
     const r3 = await missingEnv(
       'missing-bot-token',
-      { SLACK_CHANNEL_ID: CHANNEL }, // no SLACK_BOT_TOKEN
+      { SLACK_CHANNEL_ID: CHANNEL, SLACK_CHANNEL_NAME: CHANNEL_NAME }, // no SLACK_BOT_TOKEN
       ['SLACK_BOT_TOKEN']
     );
     stderrBufs.push(r3.stderr);
 
     const r4 = await missingEnv(
-      'missing-both',
-      {}, // neither set
-      ['SLACK_BOT_TOKEN', 'SLACK_CHANNEL_ID']
+      'missing-channel-name',
+      { SLACK_BOT_TOKEN: TOKEN, SLACK_CHANNEL_ID: CHANNEL }, // no SLACK_CHANNEL_NAME
+      ['SLACK_CHANNEL_NAME']
     );
     stderrBufs.push(r4.stderr);
+
+    const r5 = await missingEnv(
+      'missing-all',
+      {}, // none set
+      ['SLACK_BOT_TOKEN', 'SLACK_CHANNEL_ID', 'SLACK_CHANNEL_NAME']
+    );
+    stderrBufs.push(r5.stderr);
 
     if (failures.length) {
       console.error(`FAIL — ${failures.length} assertion(s) failed`);

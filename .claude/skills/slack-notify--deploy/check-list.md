@@ -17,18 +17,20 @@
 - [ ] Bot 已被 `/invite` 進目標 channel
 - [ ] 取得了 `xoxb-...` 開頭的 Bot User OAuth Token
 - [ ] 取得了 `C` 開頭的目標 channel ID
+- [ ] 取得了人類可讀的 channel name(去 `#` 前綴,例 `solomon-test`)
 
 ## Config
 
 - [ ] 寫入前已備份 `~/.claude.json` 到 `.claude.json.bak.<timestamp>`
-- [ ] 新增/更新後的 entry 包含三個欄位:`type` / `command`(絕對路徑) / `args` / `env`
-- [ ] `env` 同時有 `SLACK_BOT_TOKEN` 和 `SLACK_CHANNEL_ID`,兩者皆非空字串
+- [ ] 新增/更新後的 entry 包含四個欄位:`type` / `command`(絕對路徑) / `args` / `env`
+- [ ] `env` 同時有 `SLACK_BOT_TOKEN` + `SLACK_CHANNEL_ID` + `SLACK_CHANNEL_NAME`,三者皆非空字串
 - [ ] 寫入後重新 `json.load` 驗證,JSON 仍合法
 
 ## 驗證
 
-- [ ] `npm test` 顯示 `ALL PASS`(4 情境:happy、missing-channel-id、missing-bot-token、missing-both)
+- [ ] `npm test` 顯示 `ALL PASS`(5 情境:happy、missing-channel-id、missing-bot-token、missing-channel-name、missing-all)
 - [ ] Slack 端能看到 happy-path 發出的 `mcp-test-<timestamp>` 訊息
+- [ ] happy-path 的 server 回應包含 `#<channel-name>`(確認 NAME 有透到 tool 描述與回傳)
 
 ## 收尾
 
@@ -38,7 +40,8 @@
 
 ## User-level skill 部署(Step 9)
 
-- [ ] 已詢問使用者要不要把本 skill 複製到 `~/.claude/skills/slack-notify--deploy/`
-- [ ] 若使用者同意:`~/.claude/skills/slack-notify--deploy/` 下有 SKILL.md + check-list.md,且 frontmatter 完整
-- [ ] 若使用者拒絕:已告知之後想裝可以手動 `cp -r` 或重跑 skill 到 Step 9
-- [ ] 已提醒使用者「user-level 副本不會跟 repo 自動同步,要升級需重跑此 skill」
+- [ ] 已詢問使用者要不要把 **`slack-notify` skill**(發訊息用,不是這個 deploy skill)複製到 `~/.claude/skills/slack-notify/`
+- [ ] 若使用者同意:`~/.claude/skills/slack-notify/` 下有 SKILL.md + check-list.md,且 frontmatter 完整 (`name: slack-notify`)
+- [ ] 若使用者拒絕:已告知之後想裝可以手動 `cp -r <repo>/.claude/skills/slack-notify ~/.claude/skills/` 或重跑 deploy skill 到 Step 9
+- [ ] 已提醒使用者「user-level 副本不會跟 repo 自動同步,要升級需重跑此 deploy skill」
+- [ ] 已順帶提及 `slack-notify--deploy` 一般不需要安裝到 user-level(只在 repo 內工作時用)

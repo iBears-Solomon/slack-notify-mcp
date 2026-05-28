@@ -7,8 +7,12 @@
 // configure multiple slack-notify entries in ~/.claude.json.
 //
 // Required env:
-//   SLACK_BOT_TOKEN  — Bot User OAuth Token (xoxb-...)
-//   SLACK_CHANNEL_ID — Channel/user ID this instance posts to (e.g. C07XXXX)
+//   SLACK_BOT_TOKEN    — Bot User OAuth Token (xoxb-...)
+//   SLACK_CHANNEL_ID   — Channel/user ID this instance posts to (e.g. C07XXXX)
+//   SLACK_CHANNEL_NAME — Human-readable channel name (no # prefix) used for
+//                        tool description + response confirmation. Required
+//                        so the slack-notify skill can disambiguate between
+//                        multiple MCP instances by name.
 //
 // Zero npm deps — uses Node stdlib only.
 
@@ -17,19 +21,24 @@ const https = require('https');
 
 const BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
 const CHANNEL_ID = process.env.SLACK_CHANNEL_ID;
+const CHANNEL_NAME = process.env.SLACK_CHANNEL_NAME;
 
 const PROTOCOL_VERSION = '2024-11-05';
 
 // Tool schema — text + optional thread_ts. Channel is NOT a tool argument;
-// it is bound to this MCP instance via SLACK_CHANNEL_ID.
+// it is bound to this MCP instance via SLACK_CHANNEL_ID + SLACK_CHANNEL_NAME.
+// Including the channel name in the description means the model sees, at
+// tools/list time, which channel each MCP instance targets — that lets the
+// model pick the right instance when several slack-notify-* entries exist.
+const channelLabel = CHANNEL_NAME ? `#${CHANNEL_NAME}` : '(unconfigured)';
 const TOOLS = [
   {
     name: 'send_message',
     description:
-      'Send a message via the configured Slack bot to the configured channel ' +
-      "(SLACK_CHANNEL_ID set in this MCP's env). One MCP instance posts to " +
-      'exactly one channel — to target other channels, configure additional ' +
-      'slack-notify entries.',
+      `Send a message via the configured Slack bot to ${channelLabel} ` +
+      `(channel ID ${CHANNEL_ID || 'unconfigured'}). One MCP instance posts ` +
+      `to exactly one channel — to target other channels, configure additional ` +
+      `slack-notify entries.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -51,12 +60,13 @@ function checkRequiredEnv() {
   const missing = [];
   if (!BOT_TOKEN) missing.push('SLACK_BOT_TOKEN');
   if (!CHANNEL_ID) missing.push('SLACK_CHANNEL_ID');
+  if (!CHANNEL_NAME) missing.push('SLACK_CHANNEL_NAME');
   if (missing.length === 0) return null;
   return (
     'slack-notify: missing required env var(s): ' +
     missing.join(', ') +
     '. Add to the `env` block of this MCP server entry in ~/.claude.json ' +
-    'and restart Claude Code. The tool will refuse to call Slack until both are set.'
+    'and restart Claude Code. The tool will refuse to call Slack until all three are set.'
   );
 }
 
@@ -133,11 +143,12 @@ async function callSendMessage(args) {
     }
     const ts = r.ts || '';
     const ch = r.channel || CHANNEL_ID;
+    const label = CHANNEL_NAME ? `#${CHANNEL_NAME} (${ch})` : ch;
     return {
       content: [
         {
           type: 'text',
-          text: `Sent. channel=${ch} ts=${ts}`,
+          text: `Sent. channel=${label} ts=${ts}`,
         },
       ],
     };
@@ -162,7 +173,7 @@ async function handle(req) {
       result: {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: {} },
-        serverInfo: { name: 'slack-notify-local', version: '2.0.0' },
+        serverInfo: { name: 'slack-notify-local', version: '2.1.0' },
       },
     };
   }

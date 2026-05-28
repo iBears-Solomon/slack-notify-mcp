@@ -72,19 +72,24 @@
 
 ---
 
-## 5. 取得目標頻道的 Channel ID
+## 5. 取得目標頻道的 Channel ID 與 Channel Name
 
-每個 slack-notify MCP instance 綁定**一個固定頻道**,你需要把它的 channel ID 寫到 config。
+每個 slack-notify MCP instance 綁定**一個固定頻道**,你需要兩個資訊寫到 config:
 
-三種方式擇一:
+- **Channel ID**(`C` 開頭 11 碼,例 `C0XXXXXXXXX`) — Slack API 真正使用
+- **Channel Name**(去掉 `#` 前綴的純名字,例 `releases`、`alerts`、`solomon-test`) — 給 tool 描述、回傳訊息、`slack-notify` skill disambiguation 用
+
+取得方式(三種擇一):
 
 | 方式 | 怎麼做 |
 | --- | --- |
-| **Slack 桌面版**(最快) | 在 channel 名稱**右鍵 → Copy link**,URL 結尾 `/archives/CXXXXXXXX` 即 channel ID |
-| **Slack 網頁版** | 打開 channel,網址列 `https://app.slack.com/client/TXXXX/CXXXXXXXX` 中 `C` 開頭那段 |
-| **搭配其他能讀的 Slack MCP** | 用 claude.ai 內建 Slack connector 或其他 self-host MCP 跑一次 `search_channels`,設定完成後就不再需要 |
+| **Slack 桌面版**(最快) | channel **右鍵 → Copy link**,URL `https://YOUR.slack.com/archives/CXXXXXXXX` — channel name 在頻道清單上看,channel ID 是 URL 結尾的 `CXXXXXXXX` |
+| **Slack 網頁版** | 打開 channel,網址列 `https://app.slack.com/client/TXXXX/CXXXXXXXX` 中 `C` 開頭那段是 ID;channel name 看左側清單 |
+| **搭配其他能讀的 Slack MCP** | 用 claude.ai 內建 Slack connector 或其他 self-host MCP 跑一次 `search_channels` 同時拿到 ID + name |
 
 > 💡 設定完成後,slack-notify 完全 **self-contained** — 之後發訊息不需要任何其他 MCP 在線。
+
+> ⚠️ `SLACK_CHANNEL_NAME` 建議**和 Slack 上實際 channel 名一致**(例如真的 `#releases` 就填 `releases`),不然後續看到「Sent. channel=#xxx」會跟實際對不上、令人困惑。技術上你可以填任何辨識字串。
 
 ---
 
@@ -112,7 +117,8 @@ chmod +x ~/.local/share/slack-notify-mcp/slack-notify.js
   "args": [],
   "env": {
     "SLACK_BOT_TOKEN": "xoxb-REPLACE-WITH-YOUR-TOKEN",
-    "SLACK_CHANNEL_ID": "C0XXXXXXXXX"
+    "SLACK_CHANNEL_ID": "C0XXXXXXXXX",
+    "SLACK_CHANNEL_NAME": "your-channel-name"
   }
 }
 ```
@@ -121,7 +127,7 @@ chmod +x ~/.local/share/slack-notify-mcp/slack-notify.js
 
 > ⚠️ JSON 不支援註解。確認沒有 trailing comma,否則整個 config 會 parse 失敗。
 
-> ❗ **兩個 env var 都必填** — 缺任一,工具呼叫時會回明確錯誤訊息(指出缺哪個)並**不會**真的去打 Slack。
+> ❗ **三個 env var 都必填** — 缺任一,工具呼叫時會回明確錯誤訊息(指出缺哪個)並**不會**真的去打 Slack。
 
 ### 7.2 用 claude CLI(可選的替代法)
 
@@ -130,6 +136,7 @@ claude mcp add slack-notify \
   --scope user \
   --env SLACK_BOT_TOKEN=xoxb-REPLACE \
   --env SLACK_CHANNEL_ID=C0XXXXXXXXX \
+  --env SLACK_CHANNEL_NAME=your-channel-name \
   -- /Users/YOU/.local/share/slack-notify-mcp/slack-notify.js
 ```
 
@@ -142,13 +149,21 @@ claude mcp add slack-notify \
   "type": "stdio",
   "command": "/Users/YOU/.local/share/slack-notify-mcp/slack-notify.js",
   "args": [],
-  "env": { "SLACK_BOT_TOKEN": "xoxb-...", "SLACK_CHANNEL_ID": "C0AAAAAAA" }
+  "env": {
+    "SLACK_BOT_TOKEN": "xoxb-...",
+    "SLACK_CHANNEL_ID": "C0AAAAAAA",
+    "SLACK_CHANNEL_NAME": "releases"
+  }
 },
 "slack-notify-alerts": {
   "type": "stdio",
   "command": "/Users/YOU/.local/share/slack-notify-mcp/slack-notify.js",
   "args": [],
-  "env": { "SLACK_BOT_TOKEN": "xoxb-...", "SLACK_CHANNEL_ID": "C0BBBBBBB" }
+  "env": {
+    "SLACK_BOT_TOKEN": "xoxb-...",
+    "SLACK_CHANNEL_ID": "C0BBBBBBB",
+    "SLACK_CHANNEL_NAME": "alerts"
+  }
 }
 ```
 
@@ -174,15 +189,17 @@ MCP server 只在 Claude Code 啟動時載入。**完全退出再重開**,別只
 cd ~/.local/share/slack-notify-mcp
 SLACK_BOT_TOKEN=xoxb-... \
 SLACK_CHANNEL_ID=C07XXXX \
+SLACK_CHANNEL_NAME=your-channel-name \
 npm test
 ```
 
-預期 `ALL PASS`,覆蓋四個情境:
+預期 `ALL PASS`,覆蓋 5 個情境:
 
-1. **Happy path** — 完整 MCP 協定走過,並真的發一則 `mcp-test-<timestamp>` 訊息到設定的頻道
+1. **Happy path** — 完整 MCP 協定走過,tool 描述含 `#<channel-name>`,並真的發一則 `mcp-test-<timestamp>` 訊息到設定頻道
 2. **Missing SLACK_CHANNEL_ID** — 工具回 isError 提到 `SLACK_CHANNEL_ID`,Slack 沒被呼叫
 3. **Missing SLACK_BOT_TOKEN** — 同上,提到 `SLACK_BOT_TOKEN`
-4. **Both missing** — 同上,兩個都提到
+4. **Missing SLACK_CHANNEL_NAME** — 同上,提到 `SLACK_CHANNEL_NAME`
+5. **Missing all three** — 同上,三者都提到
 
 到 Slack 確認情境 1 的訊息有收到即驗證完成。
 
@@ -202,9 +219,9 @@ Claude 會呼叫 `mcp__slack-notify__send_message` with `{text: "..."}`,訊息�
 
 ## Troubleshooting
 
-### 工具呼叫回 `missing required env var(s): SLACK_BOT_TOKEN` 或 `SLACK_CHANNEL_ID`
+### 工具呼叫回 `missing required env var(s): SLACK_BOT_TOKEN` / `SLACK_CHANNEL_ID` / `SLACK_CHANNEL_NAME`
 
-`~/.claude.json` 裡那個 env block 漏設定。打開檢查兩個 key 都在,值都有(不是空字串)。修完後**重啟 Claude Code**(env 是啟動時讀的)。
+`~/.claude.json` 裡那個 env block 漏設定。打開檢查三個 key 都在,值都有(不是空字串)。修完後**重啟 Claude Code**(env 是啟動時讀的)。
 
 ### 啟動 / 重啟後,工具沒出現在工具清單
 
@@ -224,7 +241,7 @@ Claude 會呼叫 `mcp__slack-notify__send_message` with `{text: "..."}`,訊息�
 
 3. 手動跑一次,確認 server 啟得起來:
    ```bash
-   SLACK_BOT_TOKEN=xoxb-... SLACK_CHANNEL_ID=C... \
+   SLACK_BOT_TOKEN=xoxb-... SLACK_CHANNEL_ID=C... SLACK_CHANNEL_NAME=... \
      node ~/.local/share/slack-notify-mcp/slack-notify.js
    ```
    如果它 hang 住等輸入,就是 OK 的(stdio server 行為)。按 Ctrl-C 結束。如果 stderr 有印 `missing required env var(s): ...`,那就是 env 沒給對。

@@ -103,7 +103,7 @@ ls -la ./slack-notify.js 2>/dev/null
 
 ### 3. 與使用者確認部署目標
 
-問三件事(用 AskUserQuestion 一次問完):
+問四件事(用 AskUserQuestion 一次問完):
 
 1. **要新增 entry 還是修改既有 entry?**
    - 「新增」:給新的 entry 名字(預設 `slack-notify`,如已存在則建議 `slack-notify-<suffix>`)
@@ -113,7 +113,13 @@ ls -la ./slack-notify.js 2>/dev/null
    - 如使用者不知道,引導他:Slack 桌面版右鍵 channel → Copy link → URL 結尾的 `CXXXXXXXX`
    - 提醒他必須先 `/invite @你的Bot` 進該 channel(這一步無法用 API 代勞)
 
-3. **Bot token 在哪?**
+3. **目標 channel name?**(去掉 `#` 前綴的純名字,例 `solomon-test` / `releases` / `alerts`)
+   - 這個會寫進 `SLACK_CHANNEL_NAME`,給 slack-notify skill 在多 instance 場景下做 disambiguation 用
+   - 也會出現在工具描述與發送成功訊息(`Sent. channel=#xxx`)
+   - 建議和 Slack 上**實際**頻道名一致,維護心智模型一致;但技術上你可以填任何辨識用字串
+   - 如果使用者不知道、跟 channel ID 一起教他在 Slack 桌面版查看 channel 名
+
+4. **Bot token 在哪?**
    - 已有 token → 請使用者貼上(token 不會留在對話 transcript 以外的地方)
    - 沒有 token → 進 Step 4
 
@@ -149,6 +155,7 @@ cfg.setdefault('mcpServers', {})['<ENTRY_NAME>'] = {
     'env': {
         'SLACK_BOT_TOKEN': '<TOKEN>',
         'SLACK_CHANNEL_ID': '<CHANNEL_ID>',
+        'SLACK_CHANNEL_NAME': '<CHANNEL_NAME>',
     },
 }
 
@@ -176,10 +183,10 @@ ls -la <REPO>/slack-notify.js  # 應該看到 -rwxr-xr-x
 
 ```bash
 cd <REPO>
-SLACK_BOT_TOKEN=<TOKEN> SLACK_CHANNEL_ID=<CHANNEL_ID> npm test
+SLACK_BOT_TOKEN=<TOKEN> SLACK_CHANNEL_ID=<CHANNEL_ID> SLACK_CHANNEL_NAME=<CHANNEL_NAME> npm test
 ```
 
-預期 `ALL PASS`(4 個情境)。如果 happy-path fail:
+預期 `ALL PASS`(5 個情境:happy + missing-channel-id + missing-bot-token + missing-channel-name + missing-all)。如果 happy-path fail:
 
 - `Slack API error: not_in_channel` → 提醒使用者 `/invite @Bot` 進該 channel
 - `Slack API error: missing_scope` → 回 Slack App OAuth & Permissions 加 `chat:write` 並 Reinstall
@@ -198,32 +205,36 @@ SLACK_BOT_TOKEN=<TOKEN> SLACK_CHANNEL_ID=<CHANNEL_ID> npm test
 2. 重開後在**新 session** 跟 Claude 說:「發 hello 到 slack-notify」(或他自己取的 entry 名字)
 3. 他應該看到該訊息以 bot 身分送達該 channel,自己的 Slack 客戶端跳 unread + 通知
 
-### 9. 詢問是否把本 skill 部署到 user-level
+### 9. 詢問是否把 `slack-notify` skill 部署到 user-level
 
-到這一步,MCP 已經設定完成。但本 skill **只在這個 repo 的 cwd 下才會被 Claude Code 載入**。
+到這一步,MCP 已經設定完成。但「**發訊息**」這個動作目前還沒有對應的 skill 自動化 — Claude 仍然需要使用者每次清楚地說工具名/channel 才會發。
 
-問使用者(用 AskUserQuestion):「要不要把這個 deploy skill 複製到 `~/.claude/skills/slack-notify--deploy/`?這樣以後在任何專案、任何位置都可以直接呼叫(例如:新增其他 channel 的 entry、換 token、重新部署)。」
+**`slack-notify` skill**(`<REPO>/.claude/skills/slack-notify/`)就是補這個缺:它會掃 `~/.claude.json` 找到所有 slack-notify instance,單一直接送、多個依使用者指定的 channel name/id 自動選或詢問。
+
+> 📝 **這一步要部署的是 `slack-notify` skill(發訊息用),不是 `slack-notify--deploy` skill(設定用)。** Deploy skill 留在 repo 內就好,因為它本來就只在「要設定/變更 MCP」時用得到。
+
+問使用者(用 AskUserQuestion):「要不要把 **slack-notify** skill 複製到 `~/.claude/skills/slack-notify/`?這樣以後在任何專案下,跟 Claude 說『發 X 到 #xxx』時都會自動觸發。」
 
 選項:
 
 - **Yes, install/update** — 複製 SKILL.md + check-list.md 到 user-level
-- **No, keep repo-local** — 跳過,使用者只在本 repo 內使用
+- **No, keep repo-local** — 跳過,使用者只在本 repo 內可用該 skill
 
 #### 9a. 若同意,執行複製
 
 ```bash
 # 偵測目標是否已存在,顯示給使用者(知道是 install 還是 update)
-TARGET=~/.claude/skills/slack-notify--deploy
+TARGET=~/.claude/skills/slack-notify
 if [ -d "$TARGET" ]; then
-  echo "user-level skill 已存在,本次將覆蓋更新"
+  echo "user-level slack-notify skill 已存在,本次將覆蓋更新"
   ls -la "$TARGET"
 else
-  echo "首次安裝到 user-level"
+  echo "首次安裝 slack-notify skill 到 user-level"
 fi
 
 mkdir -p "$TARGET"
-cp -p <REPO>/.claude/skills/slack-notify--deploy/SKILL.md "$TARGET/SKILL.md"
-cp -p <REPO>/.claude/skills/slack-notify--deploy/check-list.md "$TARGET/check-list.md"
+cp -p <REPO>/.claude/skills/slack-notify/SKILL.md "$TARGET/SKILL.md"
+cp -p <REPO>/.claude/skills/slack-notify/check-list.md "$TARGET/check-list.md"
 
 # 驗證
 echo "--- 安裝後狀態 ---"
@@ -234,10 +245,12 @@ head -10 "$TARGET/SKILL.md"
 
 #### 9b. 確認結果並提醒
 
-- 確認 `$TARGET` 下確實有兩個檔案,且大小非 0
-- 告訴使用者:「下次在任何專案下,只要 repo 還在 (`<repo_path>`),都可以直接跟 Claude 說『跑 slack-notify--deploy skill』。」
-- **提醒**:user-level skill 的 SKILL.md 是當下時間點的快照。**repo 內的 SKILL.md 更新時,user-level 不會自動同步** — 想升級就重跑這個 skill 的 Step 9。
-- 如果使用者選 No:告訴他之後想裝可以手動 `cp -r <repo>/.claude/skills/slack-notify--deploy ~/.claude/skills/`,或重跑這個 skill 跳到 Step 9。
+- 確認 `$TARGET` 下確實有兩個檔案 (SKILL.md + check-list.md),大小非 0
+- 告訴使用者:「下次在任何 Claude Code session,跟 Claude 說『發 X 到 slack』(或指定 channel)就會走 slack-notify skill,自動找對 instance 發送。」
+- **提醒**:user-level skill 是當下時間點的快照。**repo 內 SKILL.md 更新時不會自動同步** — 想升級就重跑這個 deploy skill 的 Step 9。
+- 如果使用者選 No:告訴他之後想裝可以手動 `cp -r <repo>/.claude/skills/slack-notify ~/.claude/skills/`,或重跑 deploy skill 跳到 Step 9。
+
+> 💡 **想連 `slack-notify--deploy` 也裝到 user-level?** 一般沒必要 — 你只會在這個 repo 工作時改設定,在 repo 內就讀得到 deploy skill。但如果你希望「從任何地方都能新增 channel entry」,可以額外:`cp -r <repo>/.claude/skills/slack-notify--deploy ~/.claude/skills/`。
 
 ---
 
