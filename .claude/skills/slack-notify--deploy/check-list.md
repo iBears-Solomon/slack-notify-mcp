@@ -35,3 +35,10 @@
 - [ ] 已明確告知使用者「必須完全退出 Claude Code 再重開」才能載入新 MCP
 - [ ] 已給使用者一個重開後可直接用的測試指令(例「發 hello 到 slack-notify」)
 - [ ] Token 沒有在對話以外的地方留下完整字串(commit message / log / 其他檔案皆無)
+
+## User-level skill 部署(Step 9)
+
+- [ ] 已詢問使用者要不要把本 skill 複製到 `~/.claude/skills/slack-notify--deploy/`
+- [ ] 若使用者同意:`~/.claude/skills/slack-notify--deploy/` 下有 SKILL.md + check-list.md,且 frontmatter 完整
+- [ ] 若使用者拒絕:已告知之後想裝可以手動 `cp -r` 或重跑 skill 到 Step 9
+- [ ] 已提醒使用者「user-level 副本不會跟 repo 自動同步,要升級需重跑此 skill」

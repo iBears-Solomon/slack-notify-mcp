@@ -13,27 +13,54 @@ when_to_use: |
 
 ## Pre-requisites
 
-- 使用者位於 slack-notify-mcp 的 repo 內(`pwd` 包含 README.md + SETUP.md + slack-notify.js),或可以告訴你 repo 路徑
+- 機器上已有 slack-notify-mcp 的 repo(本身在 repo 內,或在其他位置都可以 — Step 1 會自動定位)
 - 使用者有管理權的 Slack workspace(至少能建立 App / 安裝 App)
 - 已安裝 Node.js 18+(`node --version`)
 - 已安裝 Claude Code(這個 skill 設定的 MCP 是給它用的)
 
 如果任一前置條件不滿足:**先告知使用者再決定要不要繼續**,不要嘗試自動安裝 Node 或 Claude Code。
 
+> 💡 這個 skill 可以從**任何位置**執行 — 包含本 repo 內 (`<repo>/.claude/skills/...`) 或使用者裝在 user-level (`~/.claude/skills/...`) 的副本。Step 1 會找到 repo 實體位置。
+
 ---
 
 ## Steps
 
-### 1. 讀取專案文件,建立內部知識
+### 1. 定位 repo + 讀取專案文件,建立內部知識
 
-讀取 repo 內這兩份文件作為**權威來源**,後續所有步驟都以此為準,不要依靠記憶或外部推測:
+#### 1a. 找到 repo 實體位置
 
-```text
-README.md     # 概覽、tool schema、env var 規範
-SETUP.md      # 完整 SOP、scope 設定、troubleshooting
+按以下順序找,**第一個找到就用**:
+
+```bash
+# 嘗試 1: cwd 本身就是 repo
+test -f ./slack-notify.js && test -f ./README.md && test -f ./SETUP.md && pwd
+
+# 嘗試 2: cwd 是 repo 子目錄(往上 git rev-parse)
+git -C . rev-parse --show-toplevel 2>/dev/null
+
+# 嘗試 3: 常見位置(逐一檢查)
+for d in ~/slack-notify-mcp ~/.local/share/slack-notify-mcp ~/src/slack-notify-mcp ~/repos/slack-notify-mcp ~/code/slack-notify-mcp; do
+  [ -f "$d/slack-notify.js" ] && echo "$d" && break
+done
+
+# 嘗試 4: 全部失敗 → 詢問使用者
 ```
 
-讀完後,**用一句話告訴使用者你抓到的版本**(例 "已讀 v2.0.0,目前 channel 走 SLACK_CHANNEL_ID env var,單一 chat:write scope"),確認文件未過期。
+確認方式:目標目錄必須**同時**有 `slack-notify.js`、`README.md`、`SETUP.md`。其他都不算數。
+
+若四步都失敗,**詢問使用者**:「我找不到 slack-notify-mcp 的本地副本。如果你還沒 clone,執行 `git clone https://github.com/iBears-Solomon/slack-notify-mcp.git ~/slack-notify-mcp`;如果已 clone,請告訴我絕對路徑。」
+
+#### 1b. 讀取文件
+
+從上面定位到的 repo 路徑讀取**權威來源**,後續所有步驟以此為準,不要依靠記憶或外部推測:
+
+```text
+<repo>/README.md     # 概覽、tool schema、env var 規範
+<repo>/SETUP.md      # 完整 SOP、scope 設定、troubleshooting
+```
+
+讀完後,**用一句話告訴使用者你抓到的版本與 repo 路徑**(例 "已讀 v2.0.0 @ ~/slack-notify-mcp,目前 channel 走 SLACK_CHANNEL_ID env var,單一 chat:write scope"),確認文件未過期。
 
 > ⚠️ 如果發現 SKILL.md 與 README/SETUP 內容矛盾(版本不一致時可能發生),**以 README/SETUP 為準**,並提醒使用者該 skill 可能需要更新。
 
@@ -170,6 +197,47 @@ SLACK_BOT_TOKEN=<TOKEN> SLACK_CHANNEL_ID=<CHANNEL_ID> npm test
 1. 完全退出 Claude Code(不是只關視窗,是 quit)
 2. 重開後在**新 session** 跟 Claude 說:「發 hello 到 slack-notify」(或他自己取的 entry 名字)
 3. 他應該看到該訊息以 bot 身分送達該 channel,自己的 Slack 客戶端跳 unread + 通知
+
+### 9. 詢問是否把本 skill 部署到 user-level
+
+到這一步,MCP 已經設定完成。但本 skill **只在這個 repo 的 cwd 下才會被 Claude Code 載入**。
+
+問使用者(用 AskUserQuestion):「要不要把這個 deploy skill 複製到 `~/.claude/skills/slack-notify--deploy/`?這樣以後在任何專案、任何位置都可以直接呼叫(例如:新增其他 channel 的 entry、換 token、重新部署)。」
+
+選項:
+
+- **Yes, install/update** — 複製 SKILL.md + check-list.md 到 user-level
+- **No, keep repo-local** — 跳過,使用者只在本 repo 內使用
+
+#### 9a. 若同意,執行複製
+
+```bash
+# 偵測目標是否已存在,顯示給使用者(知道是 install 還是 update)
+TARGET=~/.claude/skills/slack-notify--deploy
+if [ -d "$TARGET" ]; then
+  echo "user-level skill 已存在,本次將覆蓋更新"
+  ls -la "$TARGET"
+else
+  echo "首次安裝到 user-level"
+fi
+
+mkdir -p "$TARGET"
+cp -p <REPO>/.claude/skills/slack-notify--deploy/SKILL.md "$TARGET/SKILL.md"
+cp -p <REPO>/.claude/skills/slack-notify--deploy/check-list.md "$TARGET/check-list.md"
+
+# 驗證
+echo "--- 安裝後狀態 ---"
+ls -la "$TARGET"
+echo "--- frontmatter ---"
+head -10 "$TARGET/SKILL.md"
+```
+
+#### 9b. 確認結果並提醒
+
+- 確認 `$TARGET` 下確實有兩個檔案,且大小非 0
+- 告訴使用者:「下次在任何專案下,只要 repo 還在 (`<repo_path>`),都可以直接跟 Claude 說『跑 slack-notify--deploy skill』。」
+- **提醒**:user-level skill 的 SKILL.md 是當下時間點的快照。**repo 內的 SKILL.md 更新時,user-level 不會自動同步** — 想升級就重跑這個 skill 的 Step 9。
+- 如果使用者選 No:告訴他之後想裝可以手動 `cp -r <repo>/.claude/skills/slack-notify--deploy ~/.claude/skills/`,或重跑這個 skill 跳到 Step 9。
 
 ---
 
