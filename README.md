@@ -19,14 +19,19 @@
 
 在任何 Claude Code session 內(**不需要先手動 clone**),直接說:
 
-> 請 clone https://github.com/iBears-Solomon/slack-notify-mcp 到 ~/slack-notify-mcp,然後執行該 repo 內的 slack-notify--deploy skill
+> 請 clone https://github.com/iBears-Solomon/slack-notify-mcp 到 ~/slack-notify-mcp,然後讀 `~/slack-notify-mcp/.claude/skills/slack-notify--deploy/SKILL.md` 並依序執行所有 Steps
 
-agent 會:
+agent 會 `git clone` 後讀 [`SKILL.md`](./.claude/skills/slack-notify--deploy/SKILL.md) 按步驟執行:偵測環境、引導 Slack App 設定(scopes / install / invite)、寫入 `~/.claude.json`、跑 `npm test` 端到端驗證。
 
-1. `git clone` repo 到 `~/slack-notify-mcp`(或你指定的路徑)
-2. 讀 repo 內的 [`SKILL.md`](./.claude/skills/slack-notify--deploy/SKILL.md) 並按步驟執行:偵測環境、引導 Slack App 設定(scopes / install / invite)、寫入 `~/.claude.json`、跑 `npm test` 端到端驗證
+> 💡 為什麼要明示 `讀 SKILL.md`?Claude Code 的 skill loader 只在 session 啟動時掃描;mid-session clone 下來的 skill 不會被自動發現,所以直接讓 agent 用 Read 工具讀檔最穩。SKILL.md 本身可獨立執行,不依賴 skill registry。
 
-最後 agent 會請你完全退出 Claude Code 再重開以載入 MCP。已有 entry 也可用同樣方式更新或新增 channel。
+**⏱ 約 10-20 分鐘**。過程中你會被要求:
+
+- Slack workspace 管理權(能建立 / 安裝 App)
+- 若還沒有 bot token:手動建 Slack App + 在目標 channel 跑 `/invite @<bot>`(skill 會給你 checklist)
+- 完成後**完全退出 Claude Code(macOS: Cmd+Q,非僅關閉視窗)**再重開,新 MCP 才會載入
+
+已有 entry 也可用同樣方式更新 path / 換 token / 新增 channel。
 
 ### 方法 B:手動設定
 

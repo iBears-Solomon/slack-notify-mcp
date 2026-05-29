@@ -13,7 +13,7 @@ when_to_use: |
 
 ## Pre-requisites
 
-- 機器上已有 slack-notify-mcp 的 repo(本身在 repo 內,或在其他位置都可以 — Step 1 會自動定位)
+- 機器上已有 slack-notify-mcp 的 repo(可能是使用者之前 clone 的,或剛被指示 clone 到 `~/slack-notify-mcp` — Step 1 會自動定位)
 - 使用者有管理權的 Slack workspace(至少能建立 App / 安裝 App)
 - 已安裝 Node.js 18+(`node --version`)
 - 已安裝 Claude Code(這個 skill 設定的 MCP 是給它用的)
@@ -21,6 +21,8 @@ when_to_use: |
 如果任一前置條件不滿足:**先告知使用者再決定要不要繼續**,不要嘗試自動安裝 Node 或 Claude Code。
 
 > 💡 這個 skill 可以從**任何位置**執行 — 包含本 repo 內 (`<repo>/.claude/skills/...`) 或使用者裝在 user-level (`~/.claude/skills/...`) 的副本。Step 1 會找到 repo 實體位置。
+
+> 📖 **本檔案可獨立執行,不依賴 Claude Code skill loader** — 若你(agent)是被 prompt 指示用 Read 工具讀到此檔案(例如「請 clone … 然後讀 SKILL.md 並依序執行」這種情境,因為 mid-session clone 下來的 skill 不會被 skill registry 自動發現),**直接照下面 Steps 順序執行即可**。每個 Step 都用具體 tool call 描述,不需要 Skill() 工具觸發。
 
 ---
 
