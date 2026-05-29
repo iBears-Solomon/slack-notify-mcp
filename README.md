@@ -13,6 +13,23 @@
 
 ## Quick Start
 
+兩種安裝方式擇一:
+
+### 方法 A:讓 Claude 跑 deploy skill(推薦)
+
+在任何 Claude Code session 內(**不需要先手動 clone**),直接說:
+
+> 請 clone https://github.com/iBears-Solomon/slack-notify-mcp 到 ~/slack-notify-mcp,然後執行該 repo 內的 slack-notify--deploy skill
+
+agent 會:
+
+1. `git clone` repo 到 `~/slack-notify-mcp`(或你指定的路徑)
+2. 讀 repo 內的 [`SKILL.md`](./.claude/skills/slack-notify--deploy/SKILL.md) 並按步驟執行:偵測環境、引導 Slack App 設定(scopes / install / invite)、寫入 `~/.claude.json`、跑 `npm test` 端到端驗證
+
+最後 agent 會請你完全退出 Claude Code 再重開以載入 MCP。已有 entry 也可用同樣方式更新或新增 channel。
+
+### 方法 B:手動設定
+
 ```bash
 git clone https://github.com/iBears-Solomon/slack-notify-mcp.git ~/.local/share/slack-notify-mcp
 chmod +x ~/.local/share/slack-notify-mcp/slack-notify.js
