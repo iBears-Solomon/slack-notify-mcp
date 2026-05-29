@@ -59,12 +59,46 @@ chmod +x ~/.local/share/slack-notify-mcp/slack-notify.js
 
 ## 內附 skills
 
-repo 內有兩個 [Agent Skill](https://docs.claude.com/en/docs/claude-code/skills) 把這個 MCP 變成「Claude 直接會做的事」:
+repo 內有三個 [Agent Skill](https://docs.claude.com/en/docs/claude-code/skills) 把這個 MCP 變成「Claude 直接會做的事」:
 
 | Skill | 何時觸發 | 做什麼 |
 |---|---|---|
-| [`slack-notify--deploy`](./.claude/skills/slack-notify--deploy/SKILL.md) | 「設定 slack-notify」、「新增 channel」、「換 token」 | 讀文件、偵測環境、引導 Slack App 設定、寫入 `~/.claude.json`、跑 `npm test`、最後問你要不要把 `slack-notify` skill 裝到 user-level |
+| [`slack-notify--deploy`](./.claude/skills/slack-notify--deploy/SKILL.md) | 「設定 slack-notify」、「新增 channel」、「換 token」 | 讀文件、偵測環境、引導 Slack App 設定、寫入 `~/.claude.json`、跑 `npm test`、最後用 multi-select 問你要裝哪些附加元件(`slack-notify` skill / auto-notify hook,預設全勾) |
 | [`slack-notify`](./.claude/skills/slack-notify/SKILL.md) | 「發 X 到 slack」、「通知 #releases」、「丟訊息到 alerts」 | 掃 `~/.claude.json` 找可用 instance、單一直接送、多個依使用者指定 channel name/id 選對應 instance 或詢問 |
+| [`slack-notify--deploy-hook`](./.claude/skills/slack-notify--deploy-hook/SKILL.md) | 「裝自動通知 hook」、「Claude 做完通知我」 | 把 helper script 複製到 `~/.claude/scripts/`、在 `~/.claude/settings.json` 註冊 `Stop` hook,讓 Claude Code 每輪回應結束自動發 Slack(見下節) |
+
+## 自動通知(Claude Code hook)
+
+除了「Claude 主動發訊息」(上面的 `slack-notify` skill),還可以裝一個 **hook**,讓 Claude Code **每輪回應結束時自動**發一則 Slack 通知 —— 適合「丟個長任務給 Claude,跑完或需要你回覆時 ping 你」。
+
+**安裝**:跑 `slack-notify--deploy` 時在最後的 multi-select 勾「auto-notify hook」,或單獨跑 [`slack-notify--deploy-hook`](./.claude/skills/slack-notify--deploy-hook/SKILL.md)。裝完**完全退出再重開 Claude Code** 才生效。
+
+**訊息格式**(兩行,不含時間 — Slack 本來就有時戳):
+
+```
+已解決: <你上一則的提問>
+by slack-notify-mcp/My session title
+```
+```
+待回覆: <Claude 結束時問你的問題>
+by slack-notify-mcp/My session title
+```
+
+- 第二行的 `<project>/<title>` 是**可點連結**,用 `claude://code/new?folder=<cwd>` 開啟 Claude Code 在該專案(開新 session — Claude Code 不支援用 session id resume 既有對話)
+- **內容感知**:Claude 結束於提問(`AskUserQuestion` 或結尾 `?`/`？`)→ `待回覆:`;否則 → `已解決:`(帶上你上一則 prompt 當主題)
+
+**行為細節**:
+
+| 行為 | 說明 |
+|---|---|
+| 只裝 `Stop` | 每輪回應結束觸發。`SessionEnd`(關 session)/ `Notification`(idle 60s)預設**不**裝 — 前者撞名又觸發太頻繁、後者跟 Stop 重複;要的話在 deploy-hook 的 `events` list 加回 |
+| subagent 不通知 | 只在主 agent 觸發;transcript 路徑含 `/subagents/` 一律靜默 |
+| dedupe | 這一輪若你已用 `mcp__slack-notify__send_message` 手動發過,Stop 自動跳過,不雙重通知 |
+| 空 session 靜默 | 沒有可萃取的 prompt 又沒標題 → 跳過,不發空訊息 |
+| 標題來源 | 優先讀 Claude Desktop 的即時 / rename 標題(`~/Library/Application Support/Claude/claude-code-sessions/**/local_*.json`),讀不到才退回 transcript 的 `ai-title`,最後 `Untitled` |
+| 失敗不擋路 | Slack 送失敗只記 `~/.claude/scripts/slack-notify-hook.log` 並 **exit 0** —— Stop hook 回非零會 block 並造成無限 loop,所以一律不 surface 到對話 |
+
+> token / channel 跟 MCP 共用 `~/.claude.json` 的 `slack-notify` entry,hook 不另存密鑰。解除安裝指引見 deploy-hook skill 的 Step 8。
 
 ## Tool Schema
 

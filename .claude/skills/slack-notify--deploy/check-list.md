@@ -38,10 +38,36 @@
 - [ ] 已給使用者一個重開後可直接用的測試指令(例「發 hello 到 slack-notify」)
 - [ ] Token 沒有在對話以外的地方留下完整字串(commit message / log / 其他檔案皆無)
 
-## User-level skill 部署(Step 9)
+## 附加元件部署(Step 9 multi-select)
 
-- [ ] 已詢問使用者要不要把 **`slack-notify` skill**(發訊息用,不是這個 deploy skill)複製到 `~/.claude/skills/slack-notify/`
-- [ ] 若使用者同意:`~/.claude/skills/slack-notify/` 下有 SKILL.md + check-list.md,且 frontmatter 完整 (`name: slack-notify`)
-- [ ] 若使用者拒絕:已告知之後想裝可以手動 `cp -r <repo>/.claude/skills/slack-notify ~/.claude/skills/` 或重跑 deploy skill 到 Step 9
-- [ ] 已提醒使用者「user-level 副本不會跟 repo 自動同步,要升級需重跑此 deploy skill」
-- [ ] 已順帶提及 `slack-notify--deploy` 一般不需要安裝到 user-level(只在 repo 內工作時用)
+### Multi-select 詢問
+
+- [ ] 已用 AskUserQuestion 多選,選項包含 **Skill /slack-notify** + **Hook (auto-notify)** 兩個,且兩者**預設皆勾**
+
+### Skill 選項(若勾選了)
+
+- [ ] `~/.claude/skills/slack-notify/` 下有 SKILL.md + check-list.md,大小非 0
+- [ ] `head -10 SKILL.md` 顯示 `name: slack-notify`(frontmatter 完整)
+- [ ] 已告訴使用者「下次在任何 session 跟 Claude 說『發 X 到 slack』會自動走此 skill」
+
+### Hook 選項(若勾選了)
+
+- [ ] 已委派給 `slack-notify--deploy-hook` skill 跑完整流程(不在本 skill 重複 hook 邏輯)
+- [ ] `~/.claude/scripts/slack-notify-hook.py` 存在且可執行(`-rwxr-xr-x`)
+- [ ] `~/.claude/settings.json` 的 `hooks.Stop` 已註冊到 helper script(預設只裝 Stop;SessionEnd / Notification 不裝)
+- [ ] Smoke test 通過:Slack 收到一則自動發送訊息,`~/.claude/scripts/slack-notify-hook.log` 最後一行是 `OK ...`
+- [ ] 已告知使用者「必須完全退出 Claude Code 再重開」才會啟用 hook
+
+### 都勾的情境
+
+- [ ] 已說明 Stop dedupe 行為:這輪用過 /slack-notify 就會跳過自動通知,不會雙重發送
+
+### 都不勾的情境
+
+- [ ] 已告知之後想裝可以重跑 deploy skill 到 Step 9,或單獨跑 `slack-notify--deploy-hook`
+
+### 共通提醒
+
+- [ ] 已提醒使用者「user-level 副本是當下快照,repo 更新時不會自動同步」
+- [ ] 已提及 `slack-notify--deploy` 與 `slack-notify--deploy-hook` 一般不需安裝到 user-level
+- [ ] 已給 hook log 路徑 `~/.claude/scripts/slack-notify-hook.log` 供 troubleshoot 用
