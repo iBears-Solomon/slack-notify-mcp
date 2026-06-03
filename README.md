@@ -69,6 +69,8 @@ repo 內有三個 [Agent Skill](https://docs.claude.com/en/docs/claude-code/skil
 
 ## 自動通知(Claude Code hook)
 
+> ⛔ **這是 Claude Code 限定功能,不是給一般 Claude chat 用的。** hook 綁在 Claude Code 的 agent 生命週期(`~/.claude/settings.json`);Claude Desktop 的一般對話 / claude.ai 網頁**沒有 hook 機制**,裝不上也不會自動通知。想在其他客戶端用,見下面〈[在一般 Claude chat 用得到嗎?](#在一般-claude-chat-用得到嗎)〉。
+
 除了「Claude 主動發訊息」(上面的 `slack-notify` skill),還可以裝一個 **hook**,讓 Claude Code **每輪回應結束時自動**發一則 Slack 通知 —— 適合「丟個長任務給 Claude,跑完或需要你回覆時 ping 你」。
 
 **安裝**:跑 `slack-notify--deploy` 時在最後的 multi-select 勾「auto-notify hook」,或單獨跑 [`slack-notify--deploy-hook`](./.claude/skills/slack-notify--deploy-hook/SKILL.md)。裝完**完全退出再重開 Claude Code** 才生效。
@@ -108,6 +110,50 @@ by slack-notify-mcp/My session title
 | `SessionEnd` 預設不裝 | 關 session 才觸發,但撞名又觸發太頻繁;要的話在 deploy-hook 的 `events` list 加回 |
 
 > token / channel 跟 MCP 共用 `~/.claude.json` 的 `slack-notify` entry,hook 不另存密鑰。解除安裝指引見 deploy-hook skill 的 Step 8。
+
+## 在一般 Claude chat 用得到嗎?
+
+這個 repo 是兩個獨立的東西,可攜性不同:
+
+| 能力 | Claude Code | Claude Desktop 一般對話 | claude.ai 網頁 |
+|---|---|---|---|
+| **發訊息工具**(`send_message`) | ✅ | ✅ 加進 Desktop config 即可 | ⚠️ 需改寫成 remote MCP |
+| **自動通知 hook**(做完 / 待回覆自動 ping) | ✅ | ❌ 無 hook 機制 | ❌ 無 hook 機制 |
+
+### 發訊息工具 → 可搬到 Claude Desktop 一般對話
+
+`slack-notify.js` 是標準 stdio MCP server,Claude Desktop 一般對話也吃 MCP。把它加進 `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "slack-notify": {
+      "command": "/絕對路徑/node",
+      "args": ["/絕對路徑/slack-notify-mcp/slack-notify.js"],
+      "env": {
+        "SLACK_BOT_TOKEN": "xoxb-...",
+        "SLACK_CHANNEL_ID": "C0XXXX",
+        "SLACK_CHANNEL_NAME": "your-channel-name"
+      }
+    }
+  }
+}
+```
+
+完全退出再重開 Claude Desktop,之後在**一般對話**說「發 X 到 slack」Claude 就會呼叫工具。
+
+> ⚠️ **macOS 雷**:Claude Desktop 是 GUI 啟動,**不繼承 shell PATH**,`command` 寫 `node` / `npx` 常常找不到。用 `which node` 查出**絕對路徑**填進去(version manager 如 nvm/fnm 的路徑尤其要注意)。
+
+### claude.ai 網頁 → 需要 remote MCP connector
+
+網頁端只吃**遠端 MCP**(Streamable HTTP,SSE 已淘汰),不能跑本機 stdio。要上網頁得把這支 server 改寫 / 用 proxy(如 `mcp-remote`)包成 HTTP server、公開部署、加 OAuth —— 是另一個工程,本 repo 不含。
+
+### 自動通知(做完 ping 你)→ 一般 chat 做不到
+
+`Stop` / `Notification` hook 是 **Claude Code 與 [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/hooks) 專屬**。一般 Claude chat(Desktop / 網頁)沒有「turn 結束」的生命週期事件可掛。可行的替代:
+
+- **軟性版**:在 Project 自訂指令叫 Claude「每次回應結束都呼叫 `send_message` 通知我」—— 靠 prompt,不保證每次、也不會在「等你回覆」時觸發
+- **完整版**:用 Claude Agent SDK 自己寫一個 chat app,SDK 支援 `Stop` / `Notification` / `PreToolUse` 等 hook,即可複刻本 repo 的自動通知
 
 ## Tool Schema
 
