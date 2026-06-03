@@ -18,7 +18,7 @@
 ## Settings 註冊
 
 - [ ] 寫入前已備份 `~/.claude/settings.json` 到 `.json.bak.<timestamp>`(若原本不存在則跳過)
-- [ ] `~/.claude/settings.json` 的 `hooks` 區塊包含 `Stop`(預設**只**裝 Stop;`SessionEnd` 撞名又觸發太頻繁、`Notification` 跟 Stop 重複,皆預設不裝 — 使用者要才加)
+- [ ] `~/.claude/settings.json` 的 `hooks` 區塊包含 `Stop` + `Notification`(`SessionEnd` 預設不裝 — 撞名又觸發太頻繁,使用者要才加)
 - [ ] 每個 event 都有一筆 `{"hooks": [{"type": "command", "command": "python3 ~/.claude/scripts/slack-notify-hook.py <Event>"}]}`
 - [ ] 重複跑此 skill 時,不會重複加同樣的 command(冪等)
 - [ ] 寫入後 `json.load` 重讀仍合法

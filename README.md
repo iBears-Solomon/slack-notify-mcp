@@ -85,18 +85,27 @@ by slack-notify-mcp/My session title
 ```
 
 - 第二行的 `<project>/<title>` 是**可點連結**,用 `claude://code/new?folder=<cwd>` 開啟 Claude Code 在該專案(開新 session — Claude Code 不支援用 session id resume 既有對話)
-- **內容感知**:Claude 結束於提問(`AskUserQuestion` 或結尾 `?`/`？`)→ `待回覆:`;否則 → `已解決:`(帶上你上一則 prompt 當主題)
+- **內容感知**:plan 待核准(`ExitPlanMode`)/ 選項介面(`AskUserQuestion`)/ 結尾問句 → `待回覆:`;一般回應結束 → `已解決:`(帶上你上一則 prompt 當主題)
+
+**觸發事件**:裝 `Stop` + `Notification` 兩個 hook。
+
+| 事件 | 抓什麼 |
+|---|---|
+| `Stop` | 一般回應結束 → `已解決` / `待回覆`(結尾問句) |
+| `Notification` | **plan 待核准、選項介面** → `待回覆`。AskUserQuestion / ExitPlanMode 讓 turn 以 `stop_reason=tool_use` 結束,**`Stop` 不觸發**(Claude Code 已知限制,無專屬 hook),只能靠 Notification 抓。⚠️ 可能即時(視窗失焦)或要到 idle 門檻才觸發,**無法保證零延遲** |
 
 **行為細節**:
 
 | 行為 | 說明 |
 |---|---|
-| 只裝 `Stop` | 每輪回應結束觸發。`SessionEnd`(關 session)/ `Notification`(idle 60s)預設**不**裝 — 前者撞名又觸發太頻繁、後者跟 Stop 重複;要的話在 deploy-hook 的 `events` list 加回 |
+| 不洗版 | Notification 只在偵測到 pending 問題/計劃時送;**權限請求**(太頻繁)與**純 idle**(Stop 已送)一律忽略 |
+| 跨事件去重 | per-session signature(最後一則 assistant uuid)避免 Stop + Notification 或多次 Notification 對同一暫停重複 ping |
 | subagent 不通知 | 只在主 agent 觸發;transcript 路徑含 `/subagents/` 一律靜默 |
-| dedupe | 這一輪若你已用 `mcp__slack-notify__send_message` 手動發過,Stop 自動跳過,不雙重通知 |
+| 手動 dedupe | 這一輪若你已用 `mcp__slack-notify__send_message` 手動發過,Stop 自動跳過 |
 | 空 session 靜默 | 沒有可萃取的 prompt 又沒標題 → 跳過,不發空訊息 |
 | 標題來源 | 優先讀 Claude Desktop 的即時 / rename 標題(`~/Library/Application Support/Claude/claude-code-sessions/**/local_*.json`),讀不到才退回 transcript 的 `ai-title`,最後 `Untitled` |
 | 失敗不擋路 | Slack 送失敗只記 `~/.claude/scripts/slack-notify-hook.log` 並 **exit 0** —— Stop hook 回非零會 block 並造成無限 loop,所以一律不 surface 到對話 |
+| `SessionEnd` 預設不裝 | 關 session 才觸發,但撞名又觸發太頻繁;要的話在 deploy-hook 的 `events` list 加回 |
 
 > token / channel 跟 MCP 共用 `~/.claude.json` 的 `slack-notify` entry,hook 不另存密鑰。解除安裝指引見 deploy-hook skill 的 Step 8。
 

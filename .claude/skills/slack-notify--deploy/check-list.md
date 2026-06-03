@@ -54,7 +54,7 @@
 
 - [ ] 已委派給 `slack-notify--deploy-hook` skill 跑完整流程(不在本 skill 重複 hook 邏輯)
 - [ ] `~/.claude/scripts/slack-notify-hook.py` 存在且可執行(`-rwxr-xr-x`)
-- [ ] `~/.claude/settings.json` 的 `hooks.Stop` 已註冊到 helper script(預設只裝 Stop;SessionEnd / Notification 不裝)
+- [ ] `~/.claude/settings.json` 的 `hooks.Stop` + `hooks.Notification` 已註冊到 helper script(SessionEnd 預設不裝)
 - [ ] Smoke test 通過:Slack 收到一則自動發送訊息,`~/.claude/scripts/slack-notify-hook.log` 最後一行是 `OK ...`
 - [ ] 已告知使用者「必須完全退出 Claude Code 再重開」才會啟用 hook
 

@@ -2,14 +2,14 @@
 name: slack-notify--deploy-hook
 description: |
   把 slack-notify 自動通知 hook 安裝到使用者 ~/.claude/ 環境:複製 helper script、
-  在 ~/.claude/settings.json 註冊 Stop hook(子代理不通知),讓 Claude Code 每輪
-  回應結束時自動發 Slack 通知。
-  訊息內容感知 — 完成是「已解決: <你上次的提問>」、等回覆是「待回覆: <Claude 的問題>」。
-  (SessionEnd / Notification 預設不裝 — 詳見 Step 5;前者撞名又觸發時機過多,後者跟 Stop 重複。)
-  slack, hook, notify, auto, stop, deploy
+  在 ~/.claude/settings.json 註冊 Stop + Notification 兩個 hook(子代理不通知),
+  讓 Claude Code 每輪回應結束、以及 plan 待核准 / 選項介面出現時自動發 Slack 通知。
+  訊息內容感知 — 完成是「已解決: <你上次的提問>」、plan/選項是「待回覆: <Claude 的問題>」。
+  (SessionEnd 預設不裝 — 撞名又觸發時機過多。)
+  slack, hook, notify, auto, stop, notification, deploy
 when_to_use: |
   當使用者已經部署過 slack-notify MCP(`slack-notify--deploy` 跑完),想再加上
-  「每輪回應結束自動通知」這個能力時。也用於更新或重裝既有 hook。
+  「回應結束 / plan 待核准 / 選項待選 自動通知」這個能力時。也用於更新或重裝既有 hook。
 ---
 
 # Instructions
@@ -132,17 +132,19 @@ if p.exists():
 else:
     cfg = {}
 
-events = ['Stop']
-# Only Stop is registered by default. The hook script also handles
-# SessionEnd and Notification if you add them here, but both are off by
-# default on purpose:
-#   - SessionEnd: fires whenever ANY session closes (including stale idle
-#     tabs you forgot about), and auto-titles frequently collide
-#     ("Slack notify command" x2), so "已結束" is ambiguous + surprising.
-#   - Notification: Claude Code's built-in 60s idle reminder duplicates
-#     Stop, which already fires the moment Claude waits for input.
-# To re-enable either, add 'SessionEnd' / 'Notification' to this list and
-# re-run -- the script is content-aware for all three.
+events = ['Stop', 'Notification']
+# Stop  -> normal turn end ("已解決" / "待回覆").
+# Notification -> the ONLY hook that fires when Claude pauses on an
+#   interactive tool. AskUserQuestion / ExitPlanMode end the turn with
+#   stop_reason=tool_use, so Stop never fires for them; Notification is how
+#   we catch "plan ready for approval" and "options shown". The script only
+#   acts on Notification when a pending question/plan is detected -- it
+#   ignores permission prompts (too frequent) and plain 60s idle, and a
+#   per-session signature dedupe stops Stop+Notification double-sends.
+# SessionEnd is intentionally NOT registered: it fires whenever ANY session
+#   closes (including stale idle tabs) and auto-titles frequently collide
+#   ("Slack notify command" x2), so "已結束" is ambiguous + surprising. The
+#   script still handles it if you add 'SessionEnd' here and re-run.
 existing = cfg.setdefault('hooks', {})
 
 for event in events:
@@ -220,16 +222,18 @@ cat ~/.claude/scripts/slack-notify-hook.log | tail -5
 告訴使用者:
 
 1. **完全退出** Claude Code(quit,不是只關視窗)
-2. 重開後**任何一個 session** 都會自動啟用(只在 Claude 每輪回應結束時):
-   - Claude 完成回應 → Slack 收到 `已解決: <你上次的提問>` + `by <project>/<title>`
-   - Claude 結束於提問(AskUserQuestion 或結尾 `?`/`？`)→ 收到 `待回覆: <Claude 的問題>`
-3. **訊息不含時間** — Slack 本來就在每則訊息旁邊有時戳,沒必要重複
-4. **空 session 靜默** — Stop 在「沒有可萃取的 user prompt 又沒標題」時跳過,不送空的 `已解決`(預設沒裝 SessionEnd,所以也不會有 `已結束 by solomon/Untitled` 這種噪音)
-5. **標題用你看到的那個** — 訊息結尾的 `<project>/<title>`,title 優先讀 Claude Desktop 的即時標題(側邊欄顯示、rename 對話框編輯的那個),存在 `~/Library/Application Support/Claude/claude-code-sessions/**/local_*.json` 的 `title` 欄位。讀不到(CLI / Linux 無此路徑)才退回 transcript 的 `ai-title`。⚠️ transcript 的 `ai-title` 是早期自動生成、寫入後就凍結、**不會跟 rename**,所以不能當主來源
-6. **subagent 不會通知** — hook 只註冊在主 agent 的 `Stop`,加上 transcript 路徑含 `/subagents/` 的防呆,workflow 內部 subagent stop 一律靜默
-7. Stop 有 dedupe:如果這輪你用 `/slack-notify` 手動發過訊息,Stop 會自動跳過避免雙重通知
-8. **沒有 idle 60s 提醒** — Notification hook 預設不註冊(它跟 Stop 同時觸發只會重複)。要的話自己加 `Notification` 進 Step 5 的 `events` list 並重跑
-9. 失敗時:錯誤**只**寫進 `~/.claude/scripts/slack-notify-hook.log`,**不會**印到 Claude Code 對話裡。這是刻意設計 — Stop hook 用 exit 2 surface 錯誤會造成無限 loop(Stop 被 block → Claude 繼續 → 又結束 → Stop 又被 block …)。要看失敗就 `tail -f` log。日後想要被動提醒可以加一個 SessionStart hook 在新 session 開始時印「上次以來有 N 條失敗」
+2. 重開後**任何一個 session** 都會自動啟用:
+   - Claude 完成回應(一般 turn)→ `已解決: <你上次的提問>` + `by <project>/<title>`(`Stop`)
+   - **plan 待核准(ExitPlanMode)**→ `待回覆: 計劃已就緒,待你核准`(`Notification`)
+   - **選項介面(AskUserQuestion)/ 結尾問句** → `待回覆: <Claude 的問題>`(`Notification`)
+3. **為什麼 plan / 選項要靠 Notification** — AskUserQuestion / ExitPlanMode 讓 turn 以 `stop_reason=tool_use` 結束,**`Stop` 不會觸發**(這是 Claude Code 已知限制,無專屬 hook:issues #28273 / #21282)。`Notification` 是唯一抓得到「Claude 在等你」的事件。⚠️ Notification **可能即時觸發(視窗失焦時),也可能要到 idle 門檻才觸發** — 無法保證零延遲,這是平台行為
+4. **不洗版** — Notification 只在偵測到 pending 問題/計劃時才送;**權限請求**(太頻繁)與**純 idle 發呆**(Stop 已送過)一律忽略。再加 per-session signature 去重(以最後一則 assistant uuid 為鍵),避免 Stop + Notification 或多次 Notification 對同一個暫停重複 ping
+5. **訊息不含時間** — Slack 本來就在每則訊息旁邊有時戳
+6. **空 session 靜默** — Stop 在「沒有可萃取的 user prompt 又沒標題」時跳過,不送空的 `已解決`(預設沒裝 SessionEnd,所以也不會有 `已結束 by solomon/Untitled` 噪音)
+7. **標題用你看到的那個** — 訊息結尾的 `<project>/<title>`,title 優先讀 Claude Desktop 的即時標題(側邊欄顯示、rename 對話框編輯的那個),存在 `~/Library/Application Support/Claude/claude-code-sessions/**/local_*.json` 的 `title` 欄位。讀不到(CLI / Linux 無此路徑)才退回 transcript 的 `ai-title`。⚠️ transcript 的 `ai-title` 是早期自動生成、寫入後就凍結、**不會跟 rename**
+8. **subagent 不會通知** — hook 只註冊在主 agent,加上 transcript 路徑含 `/subagents/` 的防呆,workflow 內部 subagent 一律靜默
+9. **手動發訊息 dedupe** — 這輪你用 `/slack-notify` 手動發過訊息,Stop 會自動跳過避免雙重通知
+10. 失敗時:錯誤**只**寫進 `~/.claude/scripts/slack-notify-hook.log`,**不會**印到 Claude Code 對話裡。這是刻意設計 — Stop hook 用 exit 2 surface 錯誤會造成無限 loop(Stop 被 block → Claude 繼續 → 又結束 → Stop 又被 block …)。要看失敗就 `tail -f` log。日後想要被動提醒可以加一個 SessionStart hook 在新 session 開始時印「上次以來有 N 條失敗」
 
 ### 8. (可選)解除安裝指引
 

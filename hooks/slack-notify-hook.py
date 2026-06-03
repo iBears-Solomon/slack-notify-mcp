@@ -7,11 +7,22 @@ one place), resolves the session's display title, and posts a two-line
 status to Slack with a click-through link that opens Claude Code at the
 project.
 
-By default only `Stop` is registered in settings.json. The script ALSO
-handles `SessionEnd` and `Notification` if you wire them up, but they are
-off by default: SessionEnd fires on every session close (including stale
-idle tabs) and auto-titles collide, making "已結束" ambiguous; Notification
-(60s idle) duplicates Stop. See the deploy-hook skill to re-enable.
+Registered events (settings.json): `Stop` + `Notification`.
+  - Stop: normal turn end -> "已解決" / "待回覆" (when the turn ends on a
+    trailing ?/？).
+  - Notification: the ONLY hook that fires when Claude pauses on an
+    interactive tool. AskUserQuestion / ExitPlanMode end the turn with
+    stop_reason=tool_use, so Stop never fires for them; Notification is how
+    we catch "plan ready for approval" and "options shown". To avoid spam we
+    notify on Notification ONLY when a pending question/plan is detected --
+    permission prompts and plain 60s idle are ignored.
+`SessionEnd` is also handled if you wire it up, but is off by default: it
+fires on every session close (including stale tabs) and auto-titles collide,
+making "已結束" ambiguous.
+
+Cross-event dedupe (see tail_signature): Stop and Notification can both fire
+for the same pause; a per-session state file keyed on the last assistant
+message uuid collapses them into a single notification.
 
 Title resolution (see resolve_title): the Claude Desktop app's live title
 (what the sidebar shows / the rename dialog edits) is preferred, because
@@ -87,6 +98,13 @@ DESKTOP_SESSIONS_DIR = (
 
 SLACK_NOTIFY_TOOL = "mcp__slack-notify__send_message"
 ASK_USER_TOOL = "AskUserQuestion"
+EXIT_PLAN_TOOL = "ExitPlanMode"
+
+# Cross-event dedupe state: maps session_id -> last-notified tail signature,
+# so the same pause is not announced twice (e.g. Stop already sent, then an
+# idle Notification fires for the same turn; or Notification fires repeatedly
+# for one pending question).
+STATE_PATH = Path.home() / ".claude" / "scripts" / "slack-notify-hook.state.json"
 
 # Maximum characters for the user-visible body before truncation.
 BODY_MAX = 120
@@ -325,11 +343,16 @@ def find_last_user_text(transcript_path: str) -> str:
 
 
 def find_last_assistant_question(transcript_path: str) -> str:
-    """If the last assistant message is asking the user, return the question.
+    """If the last assistant message is awaiting the user, return a topic.
+
+    These are the cases where Claude paused for the user. The turn ends with
+    `stop_reason: tool_use`, so the Stop hook does NOT fire for (1) and (2) --
+    they are caught via the Notification hook instead.
 
     Checked in order:
-      1. An `AskUserQuestion` tool use in content -> first question's text.
-      2. The last text line ends with `?` or `？` -> that line.
+      1. `AskUserQuestion` tool use -> first question's text.
+      2. `ExitPlanMode` tool use (plan ready for approval) -> fixed label.
+      3. The last text line ends with `?` or `？` -> that line.
     Else return "".
     """
     try:
@@ -350,20 +373,21 @@ def find_last_assistant_question(transcript_path: str) -> str:
         if not isinstance(content, list):
             return ""
 
-        # 1. AskUserQuestion tool use.
+        # 1./2. Interactive tool use that pauses for the user.
         for c in content:
-            if (
-                isinstance(c, dict)
-                and c.get("type") == "tool_use"
-                and c.get("name") == ASK_USER_TOOL
-            ):
+            if not (isinstance(c, dict) and c.get("type") == "tool_use"):
+                continue
+            name = c.get("name")
+            if name == ASK_USER_TOOL:
                 qs = c.get("input", {}).get("questions", [])
                 if qs and isinstance(qs[0], dict):
                     q = qs[0].get("question", "")
                     if q:
                         return q
+            elif name == EXIT_PLAN_TOOL:
+                return "計劃已就緒,待你核准"
 
-        # 2. Last text line ends with a question mark.
+        # 3. Last text line ends with a question mark.
         texts = [
             c.get("text", "")
             for c in content
@@ -377,6 +401,64 @@ def find_last_assistant_question(transcript_path: str) -> str:
 
         return ""  # found assistant message but not waiting
     return ""
+
+
+# ---------------------------------------------------------------------------
+# cross-event dedupe (state file)
+# ---------------------------------------------------------------------------
+
+
+def tail_signature(transcript_path: str) -> str:
+    """Signature of the current turn tail = last assistant message's uuid.
+
+    Stop and Notification can both fire for the same pause (e.g. Stop ends a
+    turn, then 60s idle fires Notification); and Notification can fire more
+    than once for one pending question. Keying dedupe on the last assistant
+    message's uuid collapses all of those to a single notification.
+    Returns "" if no uuid is found (then we do NOT dedupe -- better to risk a
+    rare dup than to over-suppress).
+    """
+    try:
+        with open(transcript_path) as f:
+            lines = f.readlines()
+    except Exception:
+        return ""
+    for raw in reversed(lines):
+        try:
+            obj = json.loads(raw)
+        except Exception:
+            continue
+        if obj.get("type") == "assistant":
+            return obj.get("uuid") or obj.get("message", {}).get("id") or ""
+    return ""
+
+
+def _load_state() -> dict:
+    try:
+        return json.loads(STATE_PATH.read_text())
+    except Exception:
+        return {}
+
+
+def already_notified(session_id: str, sig: str) -> bool:
+    if not (session_id and sig):
+        return False
+    return _load_state().get(session_id) == sig
+
+
+def mark_notified(session_id: str, sig: str) -> None:
+    if not (session_id and sig):
+        return
+    st = _load_state()
+    st[session_id] = sig
+    # Bound the file: keep the most recently inserted ~150 sessions.
+    if len(st) > 300:
+        st = dict(list(st.items())[-150:])
+    try:
+        STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        STATE_PATH.write_text(json.dumps(st))
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -431,7 +513,24 @@ def main() -> None:
             log(f"SKIP SessionEnd (no title, trivial session) cwd={cwd}")
             sys.exit(0)
         body = "已結束"
-    else:
+    elif event == "Notification":
+        # Notification fires for permission prompts, 60s idle, and -- in
+        # practice -- when Claude is blocked on an interactive tool. The Stop
+        # hook does NOT fire for AskUserQuestion / ExitPlanMode (the turn ends
+        # with stop_reason=tool_use), so Notification is the ONLY way to catch
+        # them. We notify ONLY when a pending question/plan is detected:
+        #   - skips permission prompts (too frequent -> would spam), and
+        #   - skips plain idle after a normal turn (Stop already sent 已解決).
+        pending = (
+            find_last_assistant_question(transcript_path)
+            if transcript_path
+            else ""
+        )
+        if not pending:
+            log(f"SKIP Notification (no pending question/plan) cwd={cwd}")
+            sys.exit(0)
+        body = f"待回覆: {truncate(pending)}"
+    else:  # Stop (and any unknown event)
         question = (
             find_last_assistant_question(transcript_path)
             if transcript_path
@@ -453,6 +552,13 @@ def main() -> None:
                 # send a bare "已解決" that says nothing.
                 log(f"SKIP Stop (no user text, no title) cwd={cwd}")
                 sys.exit(0)
+
+    # Cross-event dedupe: collapse Stop + Notification (and repeated
+    # Notifications) for the same turn tail into one message.
+    sig = tail_signature(transcript_path) if transcript_path else ""
+    if already_notified(session_id, sig):
+        log(f"SKIP {event} (already notified this tail sig={sig[:8]}) cwd={cwd}")
+        sys.exit(0)
 
     # Slack mrkdwn link: <url|display-text>. Display text needs & < > escaped;
     # we also keep `|` away from the display text since it terminates the URL.
@@ -502,6 +608,7 @@ def main() -> None:
     if not data.get("ok"):
         fail(f"slack api error: {data.get('error', 'unknown')}")
 
+    mark_notified(session_id, sig)
     log(f"OK {event} -> {channel} ts={data.get('ts')} title={title!r}")
 
 

@@ -268,11 +268,11 @@ Skill 名: slack-notify--deploy-hook
 1. 確認 `mcpServers.slack-notify` entry 已存在且 env 完整(剛跑完前面步驟,理應通過)
 2. (可選)複製 `common--get-timestamp` skill 到 `~/.claude/skills/`
 3. 複製 `<repo>/hooks/slack-notify-hook.py` 到 `~/.claude/scripts/`,`chmod +x`
-4. 用 Python 冪等 merge `Stop` hook 進 `~/.claude/settings.json`(先備份)。預設**只**裝 Stop;`SessionEnd`(撞名又觸發太頻繁)、`Notification`(idle 60s,跟 Stop 重複)皆不裝,除非使用者特別要
-5. Smoke test:`echo '{"cwd":"..."}' | python3 ~/.claude/scripts/slack-notify-hook.py Stop`,期待 Slack 收到一則含連結的訊息
+4. 用 Python 冪等 merge `Stop` + `Notification` 兩個 hook 進 `~/.claude/settings.json`(先備份)。`Stop` 抓一般回應結束、`Notification` 抓 plan 待核准 / 選項介面(那兩種 turn 以 `stop_reason=tool_use` 結束,Stop 不觸發)。`SessionEnd`(撞名又觸發太頻繁)預設不裝,除非使用者特別要
+5. Smoke test:見 deploy-hook skill 的 Step 6(用臨時 transcript 呼叫 `slack-notify-hook.py Stop`),期待 Slack 收到一則含連結的兩行訊息
 6. 告知使用者重啟 Claude Code
 
-驗收:`~/.claude/scripts/slack-notify-hook.py` 存在且可執行,`~/.claude/settings.json` 的 `hooks.Stop` 註冊到了 helper script。
+驗收:`~/.claude/scripts/slack-notify-hook.py` 存在且可執行,`~/.claude/settings.json` 的 `hooks.Stop` + `hooks.Notification` 都註冊到了 helper script。
 
 #### 9c. 確認結果並提醒
 
