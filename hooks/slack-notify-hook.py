@@ -567,14 +567,32 @@ def main() -> None:
     body_safe = escape_for_slack(body)
     text = f"{body_safe}\nby <claude://code/new?folder={cwd_url}|{label}>"
 
-    # Resolve credentials.
+    # Resolve credentials. Two layouts exist:
+    #   1. legacy: inline env block on the mcpServers entry in ~/.claude.json
+    #   2. claude-mcp-env convention v1: the entry has no env block; secrets
+    #      live in ~/.config/claude-mcp-env/<instance>/index.js as
+    #      module.exports = { env: { KEY: "value", ... } }
+    token = channel = None
     try:
         cfg = json.loads((Path.home() / ".claude.json").read_text())
-        env = cfg["mcpServers"][INSTANCE]["env"]
-        token = env["SLACK_BOT_TOKEN"]
-        channel = env["SLACK_CHANNEL_ID"]
-    except Exception as e:
-        fail(f"cannot read slack-notify config from ~/.claude.json: {e}")
+        env = cfg["mcpServers"][INSTANCE].get("env") or {}
+        token = env.get("SLACK_BOT_TOKEN")
+        channel = env.get("SLACK_CHANNEL_ID")
+    except Exception:
+        pass
+    if not (token and channel):
+        store = Path.home() / ".config" / "claude-mcp-env" / INSTANCE / "index.js"
+        try:
+            src = store.read_text()
+            m_tok = re.search(r'SLACK_BOT_TOKEN:\s*"([^"]+)"', src)
+            m_ch = re.search(r'SLACK_CHANNEL_ID:\s*"([^"]+)"', src)
+            token = m_tok.group(1)
+            channel = m_ch.group(1)
+        except Exception as e:
+            fail(
+                "cannot read slack-notify credentials from ~/.claude.json "
+                f"env block or {store}: {e}"
+            )
 
     # Use curl rather than urllib.request: macOS system Python 3 often has no
     # cert bundle wired up, so urlopen fails with CERTIFICATE_VERIFY_FAILED.
